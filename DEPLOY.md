@@ -79,6 +79,8 @@ cd task-sync-app
 - [ ] 闹钟设 2 分钟后实测到点自动响
 
 ## 常见问题
+- **电脑上 `git push` 卡住/连不上 github.com**：国内网络常只挡 git 通道。可用脚本直传（走 api.github.com，不依赖 git）：
+  `python3 scripts/sync_to_github.py --owner JadeGovernor --repo task-sync-app -m "更新说明"`
 - **连不上/403**：Token 过期了或没勾 `JadeGovernor/task-sync` 仓库的 Contents 读写 → 重新生成并粘贴。
 - **两边同时改同一文件很罕见地丢一条**：单人使用基本不会；真遇到就「重新拉取云端」，把新改动再输入一次。
 - **想换数据仓库**：改 `js/config.js` 里的 `owner` / `repo` 两处并重新部署即可。

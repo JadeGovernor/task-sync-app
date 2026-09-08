@@ -33,3 +33,5 @@ python3 scripts/gen_icons.py
 ## 部署与 iPhone 安装、B 站语音闹钟
 
 见 **[DEPLOY.md](./DEPLOY.md)**。
+
+> 若本地 `git push` 连不上 github.com，可用 `python3 scripts/sync_to_github.py --owner JadeGovernor --repo task-sync-app -m "说明"` 直传（走 API，无需 git 通道）。

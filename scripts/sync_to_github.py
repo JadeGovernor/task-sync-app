@@ -51,12 +51,24 @@ def get_token():
 
 
 def collect_files(args):
+    """返回 {相对路径: git 文件模式}。显式文件列表时按可执行位判断。"""
     if args.files:
-        return args.files
+        modes = {}
+        for f in args.files:
+            full = os.path.join(args.cwd, f)
+            modes[f] = "100755" if os.access(full, os.X_OK) else "100644"
+        return modes
     out = subprocess.check_output(
-        ["git", "-C", args.cwd, "ls-files", "-z"], text=False
+        ["git", "-C", args.cwd, "ls-files", "-s", "-z"], text=False
     )
-    return [p.decode("utf-8") for p in out.split(b"\x00") if p]
+    modes = {}
+    for chunk in out.split(b"\x00"):
+        if not chunk:
+            continue
+        head, _, path = chunk.partition(b"\t")
+        mode = head.split(b" ")[0].decode("ascii")
+        modes[path.decode("utf-8")] = mode
+    return modes
 
 
 def main():
@@ -70,7 +82,8 @@ def main():
 
     token = get_token()
     base = "https://api.github.com/repos/%s/%s" % (args.owner, args.repo)
-    files = [f for f in collect_files(args) if not os.path.isdir(os.path.join(args.cwd, f))]
+    file_modes = collect_files(args)
+    files = [f for f in file_modes if not os.path.isdir(os.path.join(args.cwd, f))]
     if not files:
         sys.exit("没有可上传的文件")
 
@@ -90,7 +103,7 @@ def main():
         print("  blob %s (%d B)" % (f, len(content)))
 
     # 2) 建整树
-    tree = [{"path": f, "mode": "100644", "type": "blob", "sha": shas[f]} for f in files]
+    tree = [{"path": f, "mode": file_modes[f], "type": "blob", "sha": shas[f]} for f in files]
     _, tr = api(token, "POST", base + "/git/trees", {"tree": tree})
     tree_sha = tr["sha"]
 

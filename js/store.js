@@ -6,8 +6,8 @@
   const Core = window.Core;
 
   const K_TOKEN = 'ts_token_v1';
-  const K_STATE = 'ts_state_v1';
-  const K_OUTBOX = 'ts_outbox_v1';
+  const K_STATE = 'ts_state_v2';
+  const K_OUTBOX = 'ts_outbox_v2';
   const K_DEVICE = 'ts_device_v1';
 
   function b64encode(str) {

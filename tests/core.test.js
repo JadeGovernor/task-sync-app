@@ -87,6 +87,12 @@ const t = (o) => Object.assign(Core.newTask({ due: '2026-09-07' }), o);
   assert.strictEqual(Core.streakDays(tasks, ch2, '2026-09-08'), 3);
   // 全没做 → 0
   assert.strictEqual(Core.streakDays(tasks, [], '2026-09-08'), 0);
+  // 空任务列表：任何一天都算“达标”，必须返回 0 而不是死循环
+  assert.strictEqual(Core.streakDays([], [], '2026-09-08'), 0);
+  // streak 不早于最早任务的创建日
+  const todayOnly = t({ id: 's2', title: '今天开始每天', repeat: 'daily', created: '2026-09-08' });
+  const ch3 = [{ date: '2026-09-08', done: ['s2'] }];
+  assert.strictEqual(Core.streakDays([todayOnly], ch3, '2026-09-08'), 1);
 }
 
 console.log('✅ core.test.js 全部通过');

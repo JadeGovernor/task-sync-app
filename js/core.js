@@ -172,9 +172,13 @@
       const s = dayStats(tasks, checkins, d);
       return s.total === 0 || s.done >= s.total;
     };
+    // 无任务时所有日子都“达标”，必须设起点下限，否则会死循环到世界末日
+    const floors = (tasks || []).map((t) => t.created || t.due).filter(Boolean);
+    if (!floors.length) return 0;
+    const floor = floors.sort()[0];
     let cursor = ok(date) ? date : shiftDate(date, -1);
     let n = 0;
-    while (ok(cursor)) {
+    while (cursor >= floor && ok(cursor) && n < 10000) {
       n++;
       cursor = shiftDate(cursor, -1);
     }

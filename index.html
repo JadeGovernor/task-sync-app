@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>效率任务 · 三端同步</title>
+  <meta name="description" content="生活 / 公司 / 计划 三模块任务，Mac + iPhone 三端同步，每日效率打勾" />
+  <meta name="theme-color" content="#0f172a" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">✓</span>
+      <div>
+        <h1>效率任务</h1>
+        <p id="subline" class="subline">未连接</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button id="btn-new" class="btn btn-primary btn-sm" type="button">＋ 新建任务</button>
+      <button id="btn-sync" class="icon-btn" type="button" title="立即同步">⟳</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs" aria-label="模块切换"></nav>
+
+  <main id="view" class="view"></main>
+
+  <!-- 新建/编辑任务弹窗 -->
+  <div id="modal-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <form id="task-form" class="modal">
+      <h2 id="modal-title">新建任务</h2>
+      <label class="field">
+        <span>标题</span>
+        <input id="f-title" type="text" required maxlength="120" placeholder="要做的事…" />
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>模块</span>
+          <select id="f-module"></select>
+        </label>
+        <label class="field">
+          <span>重复</span>
+          <select id="f-repeat"></select>
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span>截止日期</span>
+          <input id="f-due" type="date" />
+        </label>
+        <label class="field">
+          <span>备注</span>
+          <input id="f-note" type="text" maxlength="300" placeholder="可选" />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-delete-task" class="btn btn-danger hidden" type="button">删除</button>
+        <span class="spacer"></span>
+        <button class="btn" type="button" data-close="1">取消</button>
+        <button class="btn btn-primary" type="submit">保存</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- 通用确认弹窗 -->
+  <div id="confirm-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="modal modal-sm">
+      <h2 id="confirm-title">确认操作</h2>
+      <p id="confirm-text"></p>
+      <div class="modal-actions">
+        <button id="confirm-cancel" class="btn" type="button">取消</button>
+        <button id="confirm-ok" class="btn btn-danger" type="button">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/core.js"></script>
+  <script src="./js/store.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>

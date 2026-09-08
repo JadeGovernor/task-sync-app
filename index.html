@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>效率任务 · 三端同步</title>
-  <meta name="description" content="生活 / 公司 / 计划 三模块任务，Mac + iPhone 三端同步，每日效率打勾" />
+  <meta name="description" content="今日聚合 + 公司/计划/自律/效率，Mac + iPhone 三端同步" />
   <meta name="theme-color" content="#0f172a" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/png" href="./icons/icon-192.png" />
@@ -30,31 +30,43 @@
 
   <main id="view" class="view"></main>
 
-  <!-- 新建/编辑任务弹窗 -->
+  <!-- 新建/编辑条目弹窗 -->
   <div id="modal-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <form id="task-form" class="modal">
-      <h2 id="modal-title">新建任务</h2>
+      <h2 id="modal-title">新建</h2>
       <label class="field">
         <span>标题</span>
-        <input id="f-title" type="text" required maxlength="120" placeholder="要做的事…" />
+        <input id="f-title" type="text" required maxlength="120" placeholder="写点什么…" />
       </label>
       <div class="field-row">
         <label class="field">
-          <span>模块</span>
-          <select id="f-module"></select>
+          <span>类型</span>
+          <select id="f-kind"></select>
         </label>
-        <label class="field">
-          <span>重复</span>
-          <select id="f-repeat"></select>
-        </label>
-      </div>
-      <div class="field-row">
-        <label class="field">
-          <span>截止日期</span>
+        <label class="field fg-work">
+          <span>到期日（今日/明日/更晚）</span>
           <input id="f-due" type="date" />
         </label>
+      </div>
+      <div class="field-row fg-plan">
         <label class="field">
-          <span>备注</span>
+          <span>开始（可选）</span>
+          <input id="f-range-start" type="date" />
+        </label>
+        <label class="field">
+          <span>结束（可选，最后 10 天自动置顶“紧急”）</span>
+          <input id="f-range-end" type="date" />
+        </label>
+      </div>
+      <div class="field fg-habit">
+        <label>
+          <span>习惯频率</span>
+          <select id="f-freq"></select>
+        </label>
+      </div>
+      <div class="field">
+        <label>
+          <span id="f-note-label">首条备注（可选）</span>
           <input id="f-note" type="text" maxlength="300" placeholder="可选" />
         </label>
       </div>
@@ -63,6 +75,22 @@
         <span class="spacer"></span>
         <button class="btn" type="button" data-close="1">取消</button>
         <button class="btn btn-primary" type="submit">保存</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- 记一笔：给大条目补进展备注 -->
+  <div id="note-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="note-title">
+    <form id="note-form" class="modal">
+      <h2 id="note-title">补一条进展</h2>
+      <label class="field">
+        <span>今天这条目有了什么进展？</span>
+        <textarea id="note-text" rows="3" maxlength="600" placeholder="像写日志一样，自由补充…"></textarea>
+      </label>
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button class="btn" type="button" data-note-close="1">取消</button>
+        <button class="btn btn-primary" type="submit">记下</button>
       </div>
     </form>
   </div>

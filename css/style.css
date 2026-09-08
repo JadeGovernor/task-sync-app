@@ -159,3 +159,28 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
   .view { padding-top: 22px; }
   .card { padding: 18px; }
 }
+
+/* ============ V2 扩展 ============ */
+.task.is-hot { background: linear-gradient(90deg, #fef2f2, transparent 65%); border-radius: 10px; }
+.task.is-hot .task-title { color: var(--red); font-weight: 600; }
+.row-act { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.mini-btn {
+  border: 1px solid var(--line); background: #fff; color: var(--muted);
+  padding: 3px 8px; border-radius: 8px; font-size: 12px;
+}
+.mini-btn:hover { border-color: var(--primary); color: var(--primary); }
+.mini-btn.ok-mini { color: var(--green); border-color: #bbf7d0; background: #f0fdf4; }
+.notes { border-top: 1px dashed var(--line); margin: 2px 0 6px 8px; padding: 6px 4px 2px; }
+.note-line { font-size: 12px; color: #475569; padding: 2px 0; line-height: 1.55; word-break: break-word; }
+.note-line i { font-style: normal; color: #94a3b8; margin-right: 6px; font-size: 11px; }
+.note-more { font-size: 11px; color: #94a3b8; padding-top: 2px; }
+
+.plan-board-card h3 { display: flex; align-items: center; gap: 8px; }
+.urgent-note { background: #fee2e2; color: #b91c1c; border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+.drag-handle { color: #cbd5e1; font-size: 13px; letter-spacing: -2px; cursor: grab; flex: none; padding: 0 2px; user-select: none; }
+.task.dragging { opacity: .35; }
+.task.drag-over { outline: 2px dashed var(--primary); outline-offset: -2px; border-radius: 10px; }
+.eff-row { padding: 8px 2px; font-size: 14px; }
+@media (hover: hover) {
+  .plan-board .task { cursor: grab; }
+}

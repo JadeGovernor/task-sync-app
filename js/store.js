@@ -274,6 +274,9 @@
     deleteTask(id) {
       return this._mutate({ file: 'tasks', type: 'task_delete', id });
     }
+    setRanks(ranks) {
+      return this._mutate({ file: 'tasks', type: 'rank_set', ranks });
+    }
     setChecked(date, ids) {
       return this._mutate({ file: 'checkins', type: 'checkin_set', date, ids });
     }

@@ -163,4 +163,35 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(r.value.length, 0);
 }
 
+/* 习惯清单：kind=keep + 拖动排序 */
+{
+  const k = Core.newItem({ kind: 'keep' });
+  assert.strictEqual(k.kind, 'keep');
+  assert.strictEqual(k.rank, null);
+  assert.deepStrictEqual(k.notes, []);
+  assert.ok(Core.KINDS.some((x) => x.id === 'keep'));
+  assert.strictEqual(Core.kindLabel('keep'), '习惯');
+
+  // 只有 keep 条目参与清单排序，且按 rank 升序
+  const mixed = [
+    Object.assign(Core.newItem({ kind: 'work', title: '公司活' }), { id: 'w1' }),
+    Object.assign(Core.newItem({ kind: 'keep', title: 'B' }), { id: 'k2', rank: 2 }),
+    Object.assign(Core.newItem({ kind: 'keep', title: 'A' }), { id: 'k1', rank: 1 }),
+    Object.assign(Core.newItem({ kind: 'habit', title: '每日' }), { id: 'h1' })
+  ];
+  assert.deepStrictEqual(Core.keepOrdered(mixed).map((t) => t.title), ['A', 'B']);
+
+  // 没 rank 的排在最后，不报错
+  const noRank = mixed.concat([Object.assign(Core.newItem({ kind: 'keep', title: 'C' }), { id: 'k3', created: '2026-09-01' })]);
+  assert.deepStrictEqual(Core.keepOrdered(noRank).map((t) => t.title), ['A', 'B', 'C']);
+  assert.deepStrictEqual(Core.keepOrdered([]), []);
+  assert.deepStrictEqual(Core.keepOrdered(null), []);
+
+  // 拖动后写 rank：整条重排成 1..N
+  const ranks = {};
+  Core.keepOrdered(mixed).map((t) => t.id).reverse().forEach((id, i) => { ranks[id] = i + 1; });
+  const r = Core.applyOp('tasks', mixed, { type: 'rank_set', ranks });
+  assert.deepStrictEqual(Core.keepOrdered(r.value).map((t) => t.title), ['B', 'A']);
+}
+
 console.log('✅ core.test.js（V2）全部通过');

@@ -267,13 +267,36 @@
       badge: badge != null ? badge : null, badgeCls: st.urgent ? 'is-urgent' : ''
     });
   }
-  function nextRank() {
+  function nextRank(kind) {
     let mx = 0;
-    itemOfKind('plan').forEach((t) => { if (t.rank != null && t.rank > mx) mx = t.rank; });
+    itemOfKind(kind || 'plan').forEach((t) => { if (t.rank != null && t.rank > mx) mx = t.rank; });
     return mx + 1;
   }
 
   /* ---------- 自律 ---------- */
+
+  /* ---------- 习惯清单 ---------- */
+  function keepCard(item, badge) {
+    const chips = [{ text: Core.kindLabel('keep'), cls: 'm-keep' }];
+    if (item.created) chips.push({ text: '自 ' + item.created, cls: 'dim' });
+    return cardHTML(item, { check: false, chips, badge, notesList: true });
+  }
+  function renderKeep() {
+    const list = Core.keepOrdered(items());
+    const cards = list.map((t, i) => keepCard(t, i + 1)).join('') ||
+      emptyBox('还没有记录。在下面写一条，它会一直留在这张清单里。');
+    let html = '<section class="card keep-board-card">' +
+      '<h3>我的习惯 · 整条可拖动 <span class="cnt">' + list.length + ' 条</span></h3>' +
+      '<p class="hint tight">随时记下想养成的习惯；拖动任意位置即可改顺序，序号自动重排。</p>' +
+      '<div class="keep-board plan-board" id="keep-board">' + cards + '</div></section>';
+    html += '<section class="card keep-new-card">' +
+      '<h3>记录一条习惯</h3>' +
+      '<form id="keep-form" class="keep-add">' +
+      '<input id="k-title" type="text" maxlength="120" placeholder="例如：每天 7 点起床 / 20 分钟英语" />' +
+      '<button class="btn btn-primary" type="submit">＋ 记下</button></form>' +
+      '<p class="hint">同一个习惯不用重复记，它一直留在这里。</p></section>';
+    return html;
+  }
   function habitRow(item, date, checkins, opts) {
     const st = Core.habitOn(item, date, checkins);
     if (!st) return '';
@@ -469,8 +492,9 @@
 
   /* ---------- Tab ---------- */
   function tabBtn(id, label, badge, extra) {
+    const b = badge > 99 ? '99+' : badge;   // 习惯清单会长，角标太宽会把 7 个 tab 挤歪
     return '<button class="tab' + (current === id ? ' active' : '') + '" data-tab="' + id + '" type="button">' +
-      label + (badge ? '<i>' + badge + '</i>' : '') + (extra || '') + '</button>';
+      label + (badge ? '<i>' + b + '</i>' : '') + (extra || '') + '</button>';
   }
   function render() {
     $('#subline').textContent = statusText();
@@ -482,6 +506,7 @@
       ['work', '公司', workUndone().length],
       ['plan', '计划', activePlans().length],
       ['disc', '自律', habitsAction()],
+      ['keep', '习惯', itemOfKind('keep').length],
       ['eff', '效率', 0],
       ['settings', '设置', 0]
     ];
@@ -492,6 +517,7 @@
     else if (current === 'work') view.innerHTML = renderWork();
     else if (current === 'plan') view.innerHTML = renderPlan();
     else if (current === 'disc') view.innerHTML = renderDisc();
+    else if (current === 'keep') view.innerHTML = renderKeep();
     else if (current === 'eff') view.innerHTML = renderEff();
     else view.innerHTML = renderSettings();
     bindDynamicEvents();
@@ -502,6 +528,7 @@
     if (current === 'work') return 'work';
     if (current === 'disc') return 'habit';
     if (current === 'plan') return 'plan';
+    if (current === 'keep') return 'keep';
     return 'work'; // 今日 / 效率 / 设置 默认公司
   }
   function openItemModal(presetKind, item) {
@@ -551,6 +578,10 @@
       if (!old && !rangeStart) base.rangeStart = today();
       if (!old && base.rank == null) base.rank = nextRank();
       next = Object.assign(base, { title, rangeStart, rangeEnd, updatedAt: new Date().toISOString() });
+    } else if (kind === 'keep') {
+      const base = old ? JSON.parse(JSON.stringify(old)) : Core.newItem({ kind: 'keep' });
+      if (!old && base.rank == null) base.rank = nextRank('keep');
+      next = Object.assign(base, { title, updatedAt: new Date().toISOString() });
     } else {
       const base = old ? JSON.parse(JSON.stringify(old)) : Core.newItem({ kind: 'habit' });
       next = Object.assign(base, { title, freq: $('#f-freq').value, updatedAt: new Date().toISOString() });
@@ -722,6 +753,22 @@
     });
   }
 
+  /* ---------- 习惯清单拖拽 ---------- */
+  function bindKeepDrag() {
+    const board = $('#keep-board');
+    if (!board) return;
+    makeSortable(board, {
+      itemSelector: '.item-card, .task',
+      keyOf: (el) => el.dataset.id,
+      onReorder: (ids) => {
+        const ranks = {};
+        ids.forEach((id, i) => { ranks[id] = i + 1; });
+        store.setRanks(ranks);
+        toast('习惯顺序已保存');
+      }
+    });
+  }
+
   /* ---------- 进展拖动排序 ---------- */
   function bindNoteDrag() {
     document.querySelectorAll('.notes-zone[data-notes-for]').forEach((zone) => {
@@ -758,7 +805,17 @@
       $('#p-end').value = '';
       toast('已添加，已同步到上方排序表');
     });
+    const kf = $('#keep-form');
+    if (kf) kf.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const title = $('#k-title').value.trim();
+      if (!title) return toast('先写一条习惯');
+      store.saveTask(Core.newItem({ kind: 'keep', title, rank: nextRank('keep') }));
+      $('#k-title').value = '';
+      toast('已记录，已同步到上方清单');
+    });
     bindPlanDrag();
+    bindKeepDrag();
     bindNoteDrag();
     const s1 = $('#set-token-save'); if (s1) s1.addEventListener('click', saveToken);
     const s2 = $('#set-name-save'); if (s2) s2.addEventListener('click', () => {

@@ -23,11 +23,12 @@
   };
   const uid = (p) => (p || 't') + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 
-  /* 三种大条目：公司任务 / 计划方向 / 自律习惯 */
+  /* 四种大条目：公司任务 / 计划方向 / 自律习惯 / 习惯清单 */
   const KINDS = [
     { id: 'work', label: '公司' },
     { id: 'plan', label: '计划' },
-    { id: 'habit', label: '自律' }
+    { id: 'habit', label: '自律' },
+    { id: 'keep', label: '习惯' }
   ];
   const FREQS = [
     { id: 'daily', label: '每日习惯（每天都要勾）' },
@@ -57,6 +58,8 @@
     } else if (partial && partial.kind === 'habit') {
       base.freq = 'daily';      // daily | weekly
       base.weeksDone = [];      // weekly：已完成的周（周一日期）
+    } else if (partial && partial.kind === 'keep') {
+      base.rank = null;         // 习惯清单里的先后顺序，拖动时写入
     }
     return Object.assign(base, partial || {});
   }
@@ -127,6 +130,16 @@
     const before = orderedNotes(item).map((e) => e.note.text).join('\u0001');
     const after = orderedNotes(next).map((e) => e.note.text).join('\u0001');
     return { item: next, changed: before !== after };
+  }
+
+  /* ---------- 习惯清单：拖动排序后的展示顺序 ---------- */
+  function keepOrdered(items) {
+    return (items || []).filter((t) => t && t.kind === 'keep').slice().sort((a, b) => {
+      const ra = a.rank != null ? a.rank : Infinity;
+      const rb = b.rank != null ? b.rank : Infinity;
+      if (ra !== rb) return ra - rb;
+      return (a.created || '') < (b.created || '') ? -1 : 1;
+    });
   }
 
   /* ---------- 文件级合并操作（离线队列与远程合并共用） ---------- */
@@ -311,7 +324,7 @@
 
   const api = {
     pad, dateStr, todayStr, parseDate, shiftDate, dayDiff, weekdayCN, fmtCN, uid,
-    KINDS, FREQS, kindLabel, freqLabel, newItem,
+    KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered,
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, upsertItem, removeItem,
     setCheckinDate, upsertDevice, applyOp,
     doneIdsFor, checkedOn, weekKey, weeklyDoneOn, dailyScheduledOn, habitOn,

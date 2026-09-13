@@ -348,11 +348,11 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
   .btn-sm { padding: 6px 10px; font-size: 12px; }
 }
 
-/* 标签栏：手机端改成底部固定导航，6 个等宽竖排，不再横向滚动被裁掉 */
+/* 标签栏：手机端改成底部固定导航，7 个等宽竖排，不再横向滚动被裁掉 */
 @media (max-width: 700px) {
   .tabs {
     position: fixed; left: 0; right: 0; bottom: 0; top: auto;
-    display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+    display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 0; overflow: visible;
     padding: 4px 2px calc(4px + env(safe-area-inset-bottom));
     background: rgba(255, 255, 255, .97);
@@ -362,10 +362,10 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
   }
   .tab {
     flex: 1 1 auto; flex-direction: column; align-items: center; justify-content: center;
-    gap: 1px; min-width: 0; padding: 6px 1px; border-radius: 10px;
-    font-size: 11px; line-height: 1.15; text-align: center;
+    gap: 1px; min-width: 0; padding: 6px 0; border-radius: 10px;
+    font-size: 10.5px; line-height: 1.15; text-align: center; letter-spacing: -0.2px;
   }
-  .tab i { font-size: 10px; padding: 0 4px; margin-top: 1px; }
+  .tab i { font-size: 9.5px; padding: 0 3px; margin-top: 1px; }
   /* 内容区给底部导航留出空间，最后一条不被盖住 */
   .view { padding: 10px 10px calc(84px + env(safe-area-inset-bottom)); }
   .done-sep { padding-bottom: 4px; }
@@ -407,4 +407,23 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
   .eff-row { padding: 10px 2px; }
   .item-card { padding: 10px 10px 12px; }
   .plan-board .task { padding: 10px 4px; }
+}
+
+/* ============ V5：习惯模块 ============ */
+.chip.m-keep { background: #ede9fe; color: #6d28d9; }
+.keep-board-card { border-left: 4px solid #8b5cf6; }
+.keep-board-card h3 { color: #5b21b6; }
+
+.keep-add { display: flex; gap: 8px; align-items: stretch; margin-bottom: 4px; }
+.keep-add input {
+  flex: 1 1 auto; min-width: 0;
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 11px; font-size: 14px; background: #f8fafc; color: var(--ink);
+}
+.keep-add input:focus { outline: 2px solid #c4b5fd; outline-offset: -1px; background: #fff; }
+.keep-add button { flex: none; white-space: nowrap; }
+
+@media (max-width: 700px) {
+  .keep-add { flex-direction: column; }
+  .keep-add button { width: 100%; }
 }

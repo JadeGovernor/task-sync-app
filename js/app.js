@@ -1,4 +1,4 @@
-/* V2 UI 层：今日聚合 + 公司(今日/明日) + 计划(排序/紧急) + 自律(每日/每周) + 效率(二期占位) + 设置 */
+/* V2 UI 层：今日聚合 + 公司(今日/明日) + 计划(排序/紧急) + 自律(每日/每周) + 习惯清单 + 琐事备忘录 + 效率(二期占位) + 设置 */
 (function () {
   'use strict';
   const Core = window.Core;
@@ -17,6 +17,9 @@
   let noteDragZone = null;
   let noteDragIndex = -1;
   let lastStatus = { text: '连接中…' };
+  let memoTimer = null;      // 打字防抖：停手 800ms 才写一次
+  let memoDirty = false;     // 有未保存的改动
+  let memoFlushing = false;  // 正在把备忘录写进 store，期间不要重渲染
 
   /* 顶栏状态文案：同步成功时带上时刻，方便确认「实时同步」真的在跑 */
   function statusText() {
@@ -297,6 +300,58 @@
       '<p class="hint">同一个习惯不用重复记，它一直留在这里。</p></section>';
     return html;
   }
+
+  /* ---------- 琐事：一整张备忘录，随便写、随时改 ---------- */
+  function memoStamp() {
+    const m = Core.memoOf(items());
+    if (!m || !m.updatedAt) return '还没有内容';
+    const d = new Date(m.updatedAt);
+    if (isNaN(d.getTime())) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return '已保存 · ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function renderMemo() {
+    const text = Core.memoText(items());
+    return '<section class="card memo-card">' +
+      '<h3>琐事备忘录 <span class="cnt" id="memo-count">' + text.length + ' 字</span></h3>' +
+      '<p class="hint tight">想到什么写什么，停手约 1 秒自动保存并同步到三端。没有格式，就是一张随时能改的纸。</p>' +
+      '<textarea id="memo-text" class="memo-text" spellcheck="false" ' +
+      'placeholder="随手记：要买的东西、待查的资料、临时冒出来的点子…">' + esc(text) + '</textarea>' +
+      '<div class="memo-foot"><span class="hint" id="memo-state">' + esc(memoStamp()) + '</span></div>' +
+      '</section>';
+  }
+  /* 把输入框里的字落盘；没改动时直接返回 */
+  function flushMemo() {
+    if (memoTimer) { clearTimeout(memoTimer); memoTimer = null; }
+    if (!memoDirty) return;
+    memoDirty = false;
+    const ta = document.getElementById('memo-text');
+    if (!ta) return;
+    const text = ta.value;
+    if (text === Core.memoText(items())) return;
+    const base = Core.memoOf(items()) || Core.newItem({ kind: 'memo' });
+    memoFlushing = true;                       // 期间 onchange 触发的 render 直接跳过
+    try {
+      store.saveTask(Object.assign({}, base, { memo: text }));
+    } finally {
+      memoFlushing = false;
+    }
+  }
+  function memoOnInput() {
+    memoDirty = true;
+    const ta = document.getElementById('memo-text');
+    const cnt = document.getElementById('memo-count');
+    const st = document.getElementById('memo-state');
+    if (ta && cnt) cnt.textContent = ta.value.length + ' 字';
+    if (st) st.textContent = '保存中…';
+    if (memoTimer) clearTimeout(memoTimer);
+    memoTimer = setTimeout(() => {
+      memoTimer = null;
+      flushMemo();
+      const s = document.getElementById('memo-state');
+      if (s && !memoDirty) s.textContent = memoStamp();
+    }, 800);
+  }
   function habitRow(item, date, checkins, opts) {
     const st = Core.habitOn(item, date, checkins);
     if (!st) return '';
@@ -492,11 +547,25 @@
 
   /* ---------- Tab ---------- */
   function tabBtn(id, label, badge, extra) {
-    const b = badge > 99 ? '99+' : badge;   // 习惯清单会长，角标太宽会把 7 个 tab 挤歪
+    const b = badge > 99 ? '99+' : badge;   // 习惯清单会长，角标太宽会把 8 个 tab 挤歪
     return '<button class="tab' + (current === id ? ' active' : '') + '" data-tab="' + id + '" type="button">' +
       label + (badge ? '<i>' + b + '</i>' : '') + (extra || '') + '</button>';
   }
   function render() {
+    if (memoFlushing) return;                    // 备忘录正在落盘，别把输入框重建掉
+    if (current === 'memo') {
+      const ta = document.getElementById('memo-text');
+      if (ta && document.activeElement === ta) {
+        const typed = ta.value;
+        flushMemo();                             // 先把正在敲的字存下来
+        if (ta.isConnected && typed === Core.memoText(items())) {
+          $('#subline').textContent = statusText();   // 内容没变：只更新顶栏，保住光标
+          return;
+        }
+      } else if (memoDirty) {
+        flushMemo();
+      }
+    }
     $('#subline').textContent = statusText();
     const d = today();
     const te = Core.todayEntries(items(), checkins(), d);
@@ -507,17 +576,20 @@
       ['plan', '计划', activePlans().length],
       ['disc', '自律', habitsAction()],
       ['keep', '习惯', itemOfKind('keep').length],
+      ['memo', '琐事', 0],
       ['eff', '效率', 0],
       ['settings', '设置', 0]
     ];
     $('#tabs').innerHTML = labels.map((l) => tabBtn(l[0], l[1], l[2], '')).join('');
     $('#btn-new').textContent = '＋ 新建';
+    $('#btn-new').classList.toggle('hidden', current === 'memo');   // 备忘录就地写，不需要「新建」
     const view = $('#view');
     if (current === 'today') view.innerHTML = renderToday();
     else if (current === 'work') view.innerHTML = renderWork();
     else if (current === 'plan') view.innerHTML = renderPlan();
     else if (current === 'disc') view.innerHTML = renderDisc();
     else if (current === 'keep') view.innerHTML = renderKeep();
+    else if (current === 'memo') view.innerHTML = renderMemo();
     else if (current === 'eff') view.innerHTML = renderEff();
     else view.innerHTML = renderSettings();
     bindDynamicEvents();
@@ -817,6 +889,15 @@
     bindPlanDrag();
     bindKeepDrag();
     bindNoteDrag();
+    const mt = $('#memo-text');
+    if (mt) {
+      mt.addEventListener('input', memoOnInput);
+      mt.addEventListener('blur', () => {
+        flushMemo();
+        const s = document.getElementById('memo-state');
+        if (s && !memoDirty) s.textContent = memoStamp();
+      });
+    }
     const s1 = $('#set-token-save'); if (s1) s1.addEventListener('click', saveToken);
     const s2 = $('#set-name-save'); if (s2) s2.addEventListener('click', () => {
       const n = $('#set-devname').value.trim();
@@ -874,9 +955,9 @@
   /* ---------- 全局事件（一次绑定） ---------- */
   function onViewClick(e) {
     const tabEl = e.target.closest('[data-tab]');
-    if (tabEl) { current = tabEl.dataset.tab; render(); return; }
+    if (tabEl) { flushMemo(); current = tabEl.dataset.tab; render(); return; }
     const go = e.target.closest('[data-tab-go]');
-    if (go) { current = go.dataset.tabGo; render(); return; }
+    if (go) { flushMemo(); current = go.dataset.tabGo; render(); return; }
     const act = e.target.closest('[data-action]');
     if (act) {
       const action = act.dataset.action;
@@ -928,6 +1009,7 @@
 
   /* ---------- 启动 ---------- */
   Core.KINDS.forEach((k) => {
+    if (k.id === 'memo') return;   // 琐事只有一张备忘录，不走「新建」表单
     const o = document.createElement('option');
     o.value = k.id; o.textContent = k.label + '（' + (k.id === 'work' ? '今日/明日' : k.id === 'plan' ? '方向+时间范围' : '每日/每周') + '）';
     $('#f-kind').appendChild(o);
@@ -1005,6 +1087,11 @@
 
   store.onStatus = (st) => { lastStatus = st; $('#subline').textContent = statusText(); };
   store.onChange = () => render();
+  /* 切走 / 息屏 / 关页面之前，把备忘录里没落盘的字存下来 */
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushMemo();
+  });
+  window.addEventListener('pagehide', flushMemo);
   render();
   store.init();
   if ('serviceWorker' in navigator) {

@@ -348,11 +348,11 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
   .btn-sm { padding: 6px 10px; font-size: 12px; }
 }
 
-/* 标签栏：手机端改成底部固定导航，7 个等宽竖排，不再横向滚动被裁掉 */
+/* 标签栏：手机端改成底部固定导航，8 个等宽竖排，不再横向滚动被裁掉 */
 @media (max-width: 700px) {
   .tabs {
     position: fixed; left: 0; right: 0; bottom: 0; top: auto;
-    display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+    display: grid; grid-template-columns: repeat(8, minmax(0, 1fr));
     gap: 0; overflow: visible;
     padding: 4px 2px calc(4px + env(safe-area-inset-bottom));
     background: rgba(255, 255, 255, .97);
@@ -426,4 +426,26 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 @media (max-width: 700px) {
   .keep-add { flex-direction: column; }
   .keep-add button { width: 100%; }
+}
+
+/* ============ V6：琐事备忘录 ============ */
+.chip.m-memo { background: #ffedd5; color: #c2410c; }
+.memo-card { border-left: 4px solid #0ea5e9; }
+.memo-card h3 { color: #075985; }
+
+.memo-text {
+  display: block; width: 100%; box-sizing: border-box;
+  min-height: 46vh; resize: vertical; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 13px 14px; background: #f8fafc; color: var(--ink);
+  font-size: 15px; line-height: 1.75; font-family: inherit;
+  -webkit-appearance: none; appearance: none;
+}
+.memo-text::placeholder { color: #94a3b8; }
+.memo-text:focus { outline: 2px solid #7dd3fc; outline-offset: -1px; background: #fff; }
+.memo-foot { display: flex; justify-content: flex-end; align-items: center; margin-top: 8px; }
+.memo-foot .hint { margin: 0; }
+
+@media (max-width: 700px) {
+  .memo-text { min-height: max(300px, calc(100vh - 330px)); font-size: 16px; }   /* 铺满屏幕；16px 避免 iOS 聚焦时自动放大 */
 }

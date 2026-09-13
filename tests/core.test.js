@@ -18,6 +18,11 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(h.kind, 'habit');
   assert.strictEqual(h.freq, 'daily');
   assert.deepStrictEqual(h.weeksDone, []);
+  const m = Core.newItem({ kind: 'memo' });
+  assert.strictEqual(m.kind, 'memo');
+  assert.strictEqual(m.memo, '');
+  assert.ok(Core.KINDS.some((x) => x.id === 'memo'));
+  assert.strictEqual(Core.kindLabel('memo'), '琐事');
 }
 
 /* 公司分桶：今日 / 明日 / 更晚 / 逾期顺延 / 完成 */
@@ -192,6 +197,51 @@ const D = '2026-09-08'; // 周二
   Core.keepOrdered(mixed).map((t) => t.id).reverse().forEach((id, i) => { ranks[id] = i + 1; });
   const r = Core.applyOp('tasks', mixed, { type: 'rank_set', ranks });
   assert.deepStrictEqual(Core.keepOrdered(r.value).map((t) => t.title), ['B', 'A']);
+}
+
+/* 琐事备忘录：一整张、只有一条、随便改 */
+{
+  assert.strictEqual(Core.memoOf([]), null);
+  assert.strictEqual(Core.memoOf(null), null);
+  assert.strictEqual(Core.memoText(null), '');
+  assert.strictEqual(Core.memoText([]), '');
+
+  // 习惯/公司条目不会被当成备忘录
+  const noise = [
+    Core.newItem({ kind: 'keep', title: '每天读书' }),
+    Core.newItem({ kind: 'work', title: '开会' })
+  ];
+  assert.strictEqual(Core.memoOf(noise), null);
+  assert.strictEqual(Core.memoText(noise), '');
+
+  // 新建 → 写入正文 → 再改一次，始终保持一条
+  let list = Core.applyOp('tasks', [], {
+    type: 'task_set',
+    task: Object.assign(Core.newItem({ kind: 'memo' }), { id: 'memo1', memo: '买牛奶\n周三交周报' })
+  }).value;
+  assert.strictEqual(list.length, 1);
+  assert.strictEqual(Core.memoText(list), '买牛奶\n周三交周报');
+  assert.strictEqual(Core.memoOf(list).id, 'memo1');
+
+  list = Core.applyOp('tasks', list, {
+    type: 'task_set',
+    task: Object.assign(Core.memoOf(list), { memo: '买牛奶' })
+  }).value;
+  assert.strictEqual(list.length, 1);
+  assert.strictEqual(Core.memoText(list), '买牛奶');
+
+  // 正文可以清空，条目还在（表头/时间仍在）
+  list = Core.applyOp('tasks', list, {
+    type: 'task_set',
+    task: Object.assign(Core.memoOf(list), { memo: '' })
+  }).value;
+  assert.strictEqual(Core.memoText(list), '');
+  assert.strictEqual(list.length, 1);
+
+  // 备忘录不参与今日聚合，也不会混进习惯清单
+  const te = Core.todayEntries(list, [], D);
+  assert.strictEqual(te.total, 0);
+  assert.deepStrictEqual(Core.keepOrdered(list), []);
 }
 
 console.log('✅ core.test.js（V2）全部通过');

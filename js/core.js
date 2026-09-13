@@ -1,4 +1,5 @@
-/* V2 纯逻辑层：公司(今日/明日+自动顺延)、计划(时间范围+排序+紧急)、自律(每日/每周)、备注流水。
+/* V2 纯逻辑层：公司(今日/明日+自动顺延)、计划(时间范围+排序+紧急)、自律(每日/每周)、
+ * 习惯清单、琐事备忘录、备注流水。
  * 不碰 DOM；与 Node 测试共用。 */
 (function (global) {
   'use strict';
@@ -23,12 +24,13 @@
   };
   const uid = (p) => (p || 't') + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 
-  /* 四种大条目：公司任务 / 计划方向 / 自律习惯 / 习惯清单 */
+  /* 五种大条目：公司任务 / 计划方向 / 自律习惯 / 习惯清单 / 琐事备忘录 */
   const KINDS = [
     { id: 'work', label: '公司' },
     { id: 'plan', label: '计划' },
     { id: 'habit', label: '自律' },
-    { id: 'keep', label: '习惯' }
+    { id: 'keep', label: '习惯' },
+    { id: 'memo', label: '琐事' }
   ];
   const FREQS = [
     { id: 'daily', label: '每日习惯（每天都要勾）' },
@@ -60,6 +62,9 @@
       base.weeksDone = [];      // weekly：已完成的周（周一日期）
     } else if (partial && partial.kind === 'keep') {
       base.rank = null;         // 习惯清单里的先后顺序，拖动时写入
+    } else if (partial && partial.kind === 'memo') {
+      base.title = '琐事';
+      base.memo = '';           // 一整张备忘录的正文，随时改
     }
     return Object.assign(base, partial || {});
   }
@@ -140,6 +145,15 @@
       if (ra !== rb) return ra - rb;
       return (a.created || '') < (b.created || '') ? -1 : 1;
     });
+  }
+
+  /* ---------- 琐事备忘录：整张清单只有一条，正文放在 memo 字段 ---------- */
+  function memoOf(items) {
+    return (items || []).find((t) => t && t.kind === 'memo') || null;
+  }
+  function memoText(items) {
+    const m = memoOf(items);
+    return m && typeof m.memo === 'string' ? m.memo : '';
   }
 
   /* ---------- 文件级合并操作（离线队列与远程合并共用） ---------- */
@@ -324,7 +338,7 @@
 
   const api = {
     pad, dateStr, todayStr, parseDate, shiftDate, dayDiff, weekdayCN, fmtCN, uid,
-    KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered,
+    KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered, memoOf, memoText,
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, upsertItem, removeItem,
     setCheckinDate, upsertDevice, applyOp,
     doneIdsFor, checkedOn, weekKey, weeklyDoneOn, dailyScheduledOn, habitOn,

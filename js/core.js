@@ -206,10 +206,22 @@
   function applyOp(file, value, op) {
     if (file === 'tasks') {
       if (op.type === 'task_set') {
-        const r = upsertItem(value, op.task);
+        const t = op.task || {};
+        const prev = (value || []).find((x) => x && x.id === t.id);
+        /* 最新的那条永远赢：要写进去的内容比已有内容更旧，就当这条操作不存在。
+         * 这是为了挡住「离线排队很久的老操作回放」把刚改好的内容盖回去。 */
+        if (prev && (prev.updatedAt || '') > (t.updatedAt || '')) {
+          return { value, changed: false };
+        }
+        const r = upsertItem(value, t);
         return { value: r.list, changed: r.changed };
       }
       if (op.type === 'task_delete') {
+        const prev = (value || []).find((x) => x && x.id === op.id);
+        /* 删除操作比条目本身还旧（删完之后又被编辑过）→ 丢弃，别把新内容删掉 */
+        if (prev && op.at && (prev.updatedAt || '') > op.at) {
+          return { value, changed: false };
+        }
         const r = removeItem(value, op.id);
         return { value: r.list, changed: r.changed };
       }

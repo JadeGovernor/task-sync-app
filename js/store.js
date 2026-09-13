@@ -313,6 +313,7 @@
       rec.loaded = true;
       this._touch(op.file);
       op._id = op._id || Core.uid('op');
+      op.at = op.at || new Date().toISOString();   // 操作发起时间：删除要比对谁更新
       const outbox = this._outbox();
       outbox.push(op);
       localStorage.setItem(K_OUTBOX, JSON.stringify(outbox));

@@ -24,13 +24,14 @@
   };
   const uid = (p) => (p || 't') + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 
-  /* 五种大条目：公司任务 / 计划方向 / 自律习惯 / 习惯清单 / 琐事备忘录 */
+  /* 六种大条目：公司任务 / 计划方向 / 自律习惯 / 习惯清单 / 琐事备忘录 / 创意备忘录 */
   const KINDS = [
     { id: 'work', label: '公司' },
     { id: 'plan', label: '计划' },
     { id: 'habit', label: '自律' },
     { id: 'keep', label: '习惯' },
-    { id: 'memo', label: '琐事' }
+    { id: 'memo', label: '琐事' },
+    { id: 'idea', label: '创意' }
   ];
   const FREQS = [
     { id: 'daily', label: '每日习惯（每天都要勾）' },
@@ -65,6 +66,9 @@
     } else if (partial && partial.kind === 'memo') {
       base.title = '琐事';
       base.memo = '';           // 一整张备忘录的正文，随时改
+    } else if (partial && partial.kind === 'idea') {
+      base.title = '创意';
+      base.memo = '';           // 和琐事同款：整张备忘录只有一条，正文放在 memo 字段
     }
     return Object.assign(base, partial || {});
   }
@@ -156,12 +160,13 @@
     return (items || []).filter((t) => t && t.kind === 'keep').slice().sort(compareKeep);
   }
 
-  /* ---------- 琐事备忘录：整张清单只有一条，正文放在 memo 字段 ---------- */
-  function memoOf(items) {
-    return (items || []).find((t) => t && t.kind === 'memo') || null;
+  /* ---------- 备忘录（琐事 / 创意）：整张清单只有一条，正文放在 memo 字段 ---------- */
+  function memoOf(items, kind) {
+    const k = kind || 'memo';
+    return (items || []).find((t) => t && t.kind === k) || null;
   }
-  function memoText(items) {
-    const m = memoOf(items);
+  function memoText(items, kind) {
+    const m = memoOf(items, kind);
     return m && typeof m.memo === 'string' ? m.memo : '';
   }
 

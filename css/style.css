@@ -432,6 +432,9 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 .chip.m-memo { background: #ffedd5; color: #c2410c; }
 .memo-card { border-left: 4px solid #0ea5e9; }
 .memo-card h3 { color: #075985; }
+/* 创意备忘录：同款排版，换一条紫色氛围带，和琐事区分开 */
+.memo-card.memo-idea { border-left-color: #8b5cf6; }
+.memo-card.memo-idea h3 { color: #6d28d9; }
 
 .memo-text {
   display: block; width: 100%; box-sizing: border-box;

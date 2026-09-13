@@ -449,3 +449,13 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 @media (max-width: 700px) {
   .memo-text { min-height: max(300px, calc(100vh - 330px)); font-size: 16px; }   /* 铺满屏幕；16px 避免 iOS 聚焦时自动放大 */
 }
+
+/* ============ V7：习惯去序号 + 新条目高亮 ============ */
+@keyframes keep-flash {
+  0%   { background: #ede9fe; box-shadow: 0 0 0 3px #c4b5fd; }
+  100% { background: transparent; box-shadow: 0 0 0 0 rgba(196,181,253,0); }
+}
+.keep-board .task.just-added {
+  animation: keep-flash 1.7s ease-out;
+  border-radius: 10px;
+}

@@ -279,18 +279,28 @@
   /* ---------- 自律 ---------- */
 
   /* ---------- 习惯清单 ---------- */
-  function keepCard(item, badge) {
+  function keepCard(item) {
     const chips = [{ text: Core.kindLabel('keep'), cls: 'm-keep' }];
     if (item.created) chips.push({ text: '自 ' + item.created, cls: 'dim' });
-    return cardHTML(item, { check: false, chips, badge, notesList: true });
+    return cardHTML(item, { check: false, chips, notesList: true });
+  }
+  /* 新记下的一条：滚到屏幕中间并闪一下，避免「记了却看不见」 */
+  function revealItem(id) {
+    requestAnimationFrame(() => {
+      const el = document.querySelector('#keep-board .task[data-id="' + id + '"]');
+      if (!el) return;
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.classList.add('just-added');
+      setTimeout(() => el.classList.remove('just-added'), 1700);
+    });
   }
   function renderKeep() {
     const list = Core.keepOrdered(items());
-    const cards = list.map((t, i) => keepCard(t, i + 1)).join('') ||
+    const cards = list.map((t) => keepCard(t)).join('') ||
       emptyBox('还没有记录。在下面写一条，它会一直留在这张清单里。');
     let html = '<section class="card keep-board-card">' +
       '<h3>我的习惯 · 整条可拖动 <span class="cnt">' + list.length + ' 条</span></h3>' +
-      '<p class="hint tight">随时记下想养成的习惯；拖动任意位置即可改顺序，序号自动重排。</p>' +
+      '<p class="hint tight">随时记下想养成的习惯；拖动任意位置即可调整顺序。</p>' +
       '<div class="keep-board plan-board" id="keep-board">' + cards + '</div></section>';
     html += '<section class="card keep-new-card">' +
       '<h3>记录一条习惯</h3>' +
@@ -833,8 +843,13 @@
       itemSelector: '.item-card, .task',
       keyOf: (el) => el.dataset.id,
       onReorder: (ids) => {
+        // 以屏幕上的新顺序为准，把没出现在屏幕上的也接在后面，
+        // 保证整张清单每次都重排成 1..N，永不撞号
+        const seen = {};
+        const ordered = ids.filter((id) => { if (seen[id]) return false; seen[id] = 1; return true; });
+        Core.keepOrdered(items()).forEach((t) => { if (!seen[t.id]) { seen[t.id] = 1; ordered.push(t.id); } });
         const ranks = {};
-        ids.forEach((id, i) => { ranks[id] = i + 1; });
+        ordered.forEach((id, i) => { ranks[id] = i + 1; });
         store.setRanks(ranks);
         toast('习惯顺序已保存');
       }
@@ -882,8 +897,11 @@
       e.preventDefault();
       const title = $('#k-title').value.trim();
       if (!title) return toast('先写一条习惯');
-      store.saveTask(Core.newItem({ kind: 'keep', title, rank: nextRank('keep') }));
+      const it = Core.newItem({ kind: 'keep', title, rank: nextRank('keep') });
+      store.saveTask(it);
       $('#k-title').value = '';
+      $('#k-title').blur();          // 收起手机键盘，别把刚记的那条挡在屏幕外
+      revealItem(it.id);
       toast('已记录，已同步到上方清单');
     });
     bindPlanDrag();

@@ -138,13 +138,22 @@
   }
 
   /* ---------- 习惯清单：拖动排序后的展示顺序 ---------- */
+  /* 排序键 rank → 创建日 → id，三级都确定：
+   * 即使三端各自添加导致 rank 撞号，顺序也永远稳定，不会互相「挤走」。 */
+  function compareKeep(a, b) {
+    const ra = a.rank != null ? a.rank : Infinity;
+    const rb = b.rank != null ? b.rank : Infinity;
+    if (ra !== rb) return ra < rb ? -1 : 1;
+    const ca = String(a.created || '');
+    const cb = String(b.created || '');
+    if (ca !== cb) return ca < cb ? -1 : 1;
+    const ia = String(a.id || '');
+    const ib = String(b.id || '');
+    if (ia !== ib) return ia < ib ? -1 : 1;
+    return 0;
+  }
   function keepOrdered(items) {
-    return (items || []).filter((t) => t && t.kind === 'keep').slice().sort((a, b) => {
-      const ra = a.rank != null ? a.rank : Infinity;
-      const rb = b.rank != null ? b.rank : Infinity;
-      if (ra !== rb) return ra - rb;
-      return (a.created || '') < (b.created || '') ? -1 : 1;
-    });
+    return (items || []).filter((t) => t && t.kind === 'keep').slice().sort(compareKeep);
   }
 
   /* ---------- 琐事备忘录：整张清单只有一条，正文放在 memo 字段 ---------- */

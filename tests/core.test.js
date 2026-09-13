@@ -192,6 +192,27 @@ const D = '2026-09-08'; // 周二
   assert.deepStrictEqual(Core.keepOrdered([]), []);
   assert.deepStrictEqual(Core.keepOrdered(null), []);
 
+  // 序号撞号（三端各自添加造成）时顺序也必须稳定，不能互相挤走
+  const dup = [
+    Object.assign(Core.newItem({ kind: 'keep', title: 'A' }), { id: 'k1', rank: 1, created: '2026-09-10' }),
+    Object.assign(Core.newItem({ kind: 'keep', title: 'B' }), { id: 'k2', rank: 2, created: '2026-09-10' }),
+    Object.assign(Core.newItem({ kind: 'keep', title: 'C' }), { id: 'k3', rank: 2, created: '2026-09-11' }),
+    Object.assign(Core.newItem({ kind: 'keep', title: 'D' }), { id: 'k4', rank: 3, created: '2026-09-11' })
+  ];
+  const once = Core.keepOrdered(dup).map((t) => t.title).join('');
+  assert.strictEqual(once, 'ABCD');
+  // 反复排序 + 打乱输入，结果必须完全一致（旧比较器会在这里乱跳）
+  for (let i = 0; i < 40; i++) {
+    const shuffled = dup.slice().sort(() => (i % 2 ? 1 : -1));
+    assert.strictEqual(Core.keepOrdered(shuffled).map((t) => t.title).join(''), once);
+  }
+  // 完全相同的 rank/created 时用 id 兜底，仍有确定顺序
+  const tie = [
+    Object.assign(Core.newItem({ kind: 'keep', title: 'Y' }), { id: 'k9', rank: 1, created: '2026-09-10' }),
+    Object.assign(Core.newItem({ kind: 'keep', title: 'Z' }), { id: 'k8', rank: 1, created: '2026-09-10' })
+  ];
+  assert.deepStrictEqual(Core.keepOrdered(tie).map((t) => t.title), ['Z', 'Y']);
+
   // 拖动后写 rank：整条重排成 1..N
   const ranks = {};
   Core.keepOrdered(mixed).map((t) => t.id).reverse().forEach((id, i) => { ranks[id] = i + 1; });

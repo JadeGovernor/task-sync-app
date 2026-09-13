@@ -37,7 +37,13 @@
       this.onStatus = null; // fn({state,text,at})
       this._status = { state: 'idle', text: '未连接', at: null };
       this._timer = null;
+      /* 每个文件的「本地写入版本号」。refresh 用它判断手里这份远端快照是否已经过期：
+       * 请求飞行期间本地只要写过一次，这份快照就不能再用来覆盖本地。 */
+      this._revs = { tasks: 0, checkins: 0, settings: 0 };
+      this._flushing = null;   // 同一时刻只允许一次 flush，避免同一个操作被推两遍
     }
+
+    _touch(file) { this._revs[file] = (this._revs[file] || 0) + 1; }
 
     /* ---------- 本地存储 ---------- */
     _ls(key, val) {
@@ -78,7 +84,14 @@
       ['tasks', 'checkins', 'settings'].forEach((f) => { s[f] = this.files[f].value; });
       localStorage.setItem(K_STATE, JSON.stringify(s));
     }
-    _persistOutbox() { localStorage.setItem(K_OUTBOX, JSON.stringify(this._outbox())); }
+    _persistOutbox(list) {
+      localStorage.setItem(K_OUTBOX, JSON.stringify(list || this._outbox()));
+    }
+    /* 把已经成功推送的操作从队列里摘掉；期间新入队的操作必须原样留着 */
+    _dropFromOutbox(doneIds) {
+      const rest = this._outbox().filter((o) => !doneIds.has(o._id));
+      localStorage.setItem(K_OUTBOX, JSON.stringify(rest));
+    }
     _outbox() { return this._ls(K_OUTBOX) || []; }
     _outboxFor(file) { return this._outbox().filter((o) => o.file === file); }
 
@@ -142,6 +155,7 @@
       if (rec) {
         rec.sha = j.content ? j.content.sha : sha;
         rec.etag = null; // 内容已变，下次拉取必须完整取一次以拿到新 ETag
+        this._touch(file); // 远端刚变过，之前发出的 GET 结果一律作废
       }
       return j.content ? j.content.sha : sha;
     }
@@ -151,18 +165,25 @@
       return !!(err && (err instanceof TypeError || /network|fetch|load failed/i.test(err && err.message)));
     }
 
-    /* 用远端最新值 + outbox 里的本地操作，重新物化某个文件的显示值 */
-    _materialize(file) {
-      let value = this.files[file].value;
+    /* 把某个文件「还没上传成功」的本地操作，叠到任意一份基底值上 */
+    _materializeFrom(base, file) {
+      let value = base;
       this._outboxFor(file).forEach((op) => {
         const r = Core.applyOp(file, value, op);
         value = r.value;
       });
       return value;
     }
+    /* 当前本地值 + 尚未上传的操作 */
+    _materialize(file) { return this._materializeFrom(this.files[file].value, file); }
 
     /* ---------- 对外操作 ---------- */
     init() {
+      /* 一次性迁移：旧版本的待上传队列从不清空，里面堆着几个月来早已同步成功的历史操作。
+       * 这些操作被重放时，会把别的设备后来改的内容盖回旧值（删掉的习惯复活、新写的琐事消失），
+       * 所以升级到本版后把旧队列整段丢掉，以远端为准重新同步。 */
+      const legacy = this._outbox();
+      if (legacy.some((o) => o && o._id == null)) localStorage.removeItem(K_OUTBOX);
       const saved = this._ls(K_STATE);
       if (saved) {
         ['tasks', 'checkins', 'settings'].forEach((f) => {
@@ -197,24 +218,22 @@
         let changed = false;
         await Promise.all(['tasks', 'checkins', 'settings'].map(async (f) => {
           const rec = this.files[f];
+          const revAtStart = this._revs[f] || 0;
           // 只有本地已有一份完整副本时才带 ETag：命中即 304，省流量也省速率配额
           const remote = await this._fetchRemote(f, rec.loaded && !!rec.etag);
           if (remote.notModified) return;
+          // 这次请求还在路上时，本地又写过东西（或刚往远端推过一条）：
+          // 手里这份快照可能已经是旧的，直接丢给下一轮，绝不用它盖掉刚写的内容。
+          if ((this._revs[f] || 0) !== revAtStart) return;
+          // 远端最新值 + 还没上传成功的本地操作 = 应该显示的内容
+          const merged = this._materializeFrom(remote.value, f);
           const before = JSON.stringify(rec.value);
           rec.etag = remote.etag || null;
           rec.sha = remote.sha;
-          rec.value = remote.value;
+          rec.value = merged;
           rec.loaded = true;
-          if (before !== JSON.stringify(remote.value)) changed = true;
+          if (before !== JSON.stringify(merged)) changed = true;
         }));
-        // 若还有未上传的本地操作，物化后展示，避免刷新把本地改动“刷没”
-        if (this._outbox().length) {
-          ['tasks', 'checkins', 'settings'].forEach((f) => {
-            const materialized = this._materialize(f);
-            if (JSON.stringify(materialized) !== JSON.stringify(this.files[f].value)) changed = true;
-            this.files[f].value = materialized;
-          });
-        }
         this._persistState();
         this.setStatus('ok', '已同步', new Date());
         if (changed && this.onChange) this.onChange();
@@ -229,31 +248,46 @@
     }
 
     async _syncOne(op) {
+      const rec = this.files[op.file];
       const remote = await this._fetchRemote(op.file);
       const r = Core.applyOp(op.file, remote.value, op);
       if (!r.changed) {
         // 远端已包含该操作效果（例如另一台设备已提交），无需重复写
-        this.files[op.file].sha = remote.sha;
+        rec.sha = remote.sha;
+        rec.loaded = true;
         return false;
       }
       const sha = await this._putRemote(op.file, r.value, remote.sha);
-      this.files[op.file].sha = sha;
-      this.files[op.file].value = r.value;
-      this.files[op.file].loaded = true;
+      rec.sha = sha;
+      rec.loaded = true;
+      // 推送期间用户可能又写了几条，要在「远端 + 本条」的基础上接着叠，不能丢
+      rec.value = this._materializeFrom(r.value, op.file);
       return true;
     }
 
     async flush() {
+      if (!this.token) return;
+      if (this._flushing) return this._flushing;   // 已经有一次在跑，别重复推
+      this._flushing = this._doFlush();
+      try { return await this._flushing; } finally { this._flushing = null; }
+    }
+
+    async _doFlush() {
       const outbox = this._outbox();
-      if (!outbox.length || !this.token) return;
+      if (!outbox.length) return;
+      // 旧版本留下的操作没有 _id，补一个，否则摘不干净会一直重放
+      let patched = false;
+      outbox.forEach((o) => { if (o._id == null) { o._id = Core.uid('op'); patched = true; } });
+      if (patched) this._persistOutbox(outbox);
       this.setStatus('syncing', '同步中…');
+      const doneIds = new Set();
       let failed = false;
-      while (outbox.length && !failed) {
-        const op = outbox[0];
+      for (let i = 0; i < outbox.length && !failed; i++) {
+        const op = outbox[i];
         try {
           await this._syncOne(op);
-          outbox.shift();
-          this._persistOutbox();
+          doneIds.add(op._id);
+          this._dropFromOutbox(doneIds);   // 推成功一条就摘一条，期间新入队的原样保留
         } catch (err) {
           failed = true;
           if (this._isOffline(err)) {
@@ -277,6 +311,8 @@
       if (!r.changed) return false;
       rec.value = r.value;
       rec.loaded = true;
+      this._touch(op.file);
+      op._id = op._id || Core.uid('op');
       const outbox = this._outbox();
       outbox.push(op);
       localStorage.setItem(K_OUTBOX, JSON.stringify(outbox));

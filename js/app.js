@@ -20,6 +20,7 @@
   let memoTimer = null;      // 打字防抖：停手 800ms 才写一次
   let memoDirty = false;     // 有未保存的改动
   let memoFlushing = false;  // 正在把备忘录写进 store，期间不要重渲染
+  let memoDraft = null;      // 输入框里还没落盘的文字：重渲染时优先用它，防止刚敲的字被冲掉
 
   /* 顶栏状态文案：同步成功时带上时刻，方便确认「实时同步」真的在跑 */
   function statusText() {
@@ -321,7 +322,8 @@
     return '已保存 · ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
   function renderMemo() {
-    const text = Core.memoText(items());
+    // 有未落盘的草稿就显示草稿：同步触发的重渲染不会把正在敲的字冲掉
+    const text = memoDraft != null ? memoDraft : Core.memoText(items());
     return '<section class="card memo-card">' +
       '<h3>琐事备忘录 <span class="cnt" id="memo-count">' + text.length + ' 字</span></h3>' +
       '<p class="hint tight">想到什么写什么，停手约 1 秒自动保存并同步到三端。没有格式，就是一张随时能改的纸。</p>' +
@@ -333,13 +335,15 @@
   /* 把输入框里的字落盘；没改动时直接返回 */
   function flushMemo() {
     if (memoTimer) { clearTimeout(memoTimer); memoTimer = null; }
-    if (!memoDirty) return;
-    memoDirty = false;
+    if (!memoDirty && memoDraft == null) return;
     const ta = document.getElementById('memo-text');
-    if (!ta) return;
-    const text = ta.value;
-    if (text === Core.memoText(items())) return;
+    // 输入框可能已经被切页销毁，这时用草稿兜底，绝不因为「找不到 DOM」丢掉刚写的字
+    const text = ta ? ta.value : memoDraft;
+    if (text == null) return;
+    memoDirty = false;
+    if (text === Core.memoText(items())) { memoDraft = null; return; }
     const base = Core.memoOf(items()) || Core.newItem({ kind: 'memo' });
+    memoDraft = null;
     memoFlushing = true;                       // 期间 onchange 触发的 render 直接跳过
     try {
       store.saveTask(Object.assign({}, base, { memo: text }));
@@ -350,6 +354,7 @@
   function memoOnInput() {
     memoDirty = true;
     const ta = document.getElementById('memo-text');
+    if (ta) memoDraft = ta.value;
     const cnt = document.getElementById('memo-count');
     const st = document.getElementById('memo-state');
     if (ta && cnt) cnt.textContent = ta.value.length + ' 字';
@@ -572,7 +577,7 @@
           $('#subline').textContent = statusText();   // 内容没变：只更新顶栏，保住光标
           return;
         }
-      } else if (memoDirty) {
+      } else if (memoDirty || memoDraft != null) {
         flushMemo();
       }
     }

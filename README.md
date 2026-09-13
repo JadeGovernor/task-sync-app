@@ -19,6 +19,8 @@ python3 -m http.server 8000
 # 打开 http://localhost:8000
 ```
 
+或者直接双击仓库里的 **`启动本地服务.command`**，然后打开 `http://127.0.0.1:8123/`（手机同 Wi-Fi 也可用 `http://<Mac的IP>:8123/`）。
+
 ## 测试
 
 ```bash

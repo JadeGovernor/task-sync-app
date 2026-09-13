@@ -211,3 +211,6 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
   font-size: 12px; color: #475569; padding: 2px 0 2px 34px; line-height: 1.5; word-break: break-word;
 }
 .note-latest i { font-style: normal; color: #94a3b8; margin-right: 6px; font-size: 11px; }
+
+.notes-count { font-size: 11px; color: #94a3b8; padding-bottom: 3px; }
+.notes-plain { border-top: 1px dashed var(--line); margin: 2px 0 0; padding-top: 6px; }

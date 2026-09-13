@@ -103,16 +103,15 @@
   function notesZoneHTML(item) {
     const notes = (item.notes || []).slice().reverse();
     if (!notes.length) return '<div class="notes-zone empty-notes">还没有进展，第一条写在下面 ↓</div>';
-    const latest = notes.slice(0, 3), rest = notes.slice(3);
-    return '<div class="notes-zone">' + latest.map(noteLineHTML).join('') +
-      (rest.length ? '<details class="note-rest"><summary>查看更早 ' + rest.length + ' 条</summary>' +
-        rest.map(noteLineHTML).join('') + '</details>' : '') + '</div>';
+    return '<div class="notes-zone">' +
+      '<div class="notes-count">共 ' + notes.length + ' 条进展 · 最新在上</div>' +
+      notes.map(noteLineHTML).join('') + '</div>';
   }
-  function latestNoteHTML(item) {
+  function notesListHTML(item) {
     const notes = item.notes || [];
     if (!notes.length) return '';
-    const n = notes[notes.length - 1];
-    return '<div class="note-latest"><i>' + esc(Core.fmtNoteTime(n, today())) + '</i>' + esc(n.text) + '</div>';
+    return '<div class="notes-zone notes-plain"><div class="notes-count">共 ' + notes.length + ' 条进展 · 最新在上</div>' +
+      notes.slice().reverse().map(noteLineHTML).join('') + '</div>';
   }
   function noteInputHTML(id) {
     return '<form class="note-inline" data-id="' + id + '">' +
@@ -144,7 +143,7 @@
       return '<div class="item-card' + (o.hot ? ' is-hot' : '') + '" data-id="' + item.id + '">' +
         row + notesZoneHTML(item) + noteInputHTML(item.id) + '</div>';
     }
-    return row + (o.latestNote ? latestNoteHTML(item) : '');
+    return row + (o.notesList ? notesListHTML(item) : '');
   }
   function section(title, body, extra) {
     return '<section class="card"><h3>' + esc(title) + '</h3>' + (extra || '') + body + '</section>';
@@ -229,7 +228,7 @@
       chips.push({ text: st.done ? '本周已勾' : '本周待勾', cls: st.done ? 'ok' : 'warn' });
     }
     const hot = st.kind === 'daily' && item.freq === 'daily' && !st.done;
-    return cardHTML(item, { check: true, done: st.done, date, chips, latestNote: true, hot });
+    return cardHTML(item, { check: true, done: st.done, date, chips, notesZone: true, hot });
   }
 
   /* ---------- 今日首页 ---------- */
@@ -242,12 +241,12 @@
       if (e.overdue) chips.push({ text: '逾期自动顺延', cls: 'warn' });
       if (e.item.due) chips.push({ text: e.item.due, cls: 'dim' });
       chips.push({ text: '公司', cls: 'm-work' });
-      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, latestNote: true, hot: e.overdue && !e.done });
+      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, notesList: true, hot: e.overdue && !e.done });
     }).join('');
     const habitHtml = te.habits.map((e) => {
       const chips = [{ text: '自律 · 每日', cls: 'm-life' }];
       if (e.missed) chips.push({ text: '昨日未打勾', cls: 'warn' });
-      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, latestNote: true, hot: e.missed && !e.done });
+      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, notesList: true, hot: e.missed && !e.done });
     }).join('');
     return section('今日效率', '<div class="progress">' +
       '<div class="progress-head"><span>' + Core.fmtCN(d) + '</span>' +

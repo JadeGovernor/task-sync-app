@@ -171,8 +171,15 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 .mini-btn:hover { border-color: var(--primary); color: var(--primary); }
 .mini-btn.ok-mini { color: var(--green); border-color: #bbf7d0; background: #f0fdf4; }
 .notes { border-top: 1px dashed var(--line); margin: 2px 0 6px 8px; padding: 6px 4px 2px; }
-.note-line { font-size: 12px; color: #475569; padding: 2px 0; line-height: 1.55; word-break: break-word; }
-.note-line i { font-style: normal; color: #94a3b8; margin-right: 6px; font-size: 11px; }
+.note-line { font-size: 12px; color: #475569; padding: 3px 0; line-height: 1.55; word-break: break-word; display: flex; align-items: flex-start; gap: 5px; border-radius: 8px; }
+.note-line i { font-style: normal; color: #94a3b8; margin-right: 4px; font-size: 11px; white-space: nowrap; padding-top: 1px; }
+.note-line.dragging { opacity: .35; }
+.note-line.drag-over { outline: 2px dashed var(--primary); outline-offset: -2px; }
+.note-drag { color: #cbd5e1; cursor: grab; flex: none; letter-spacing: -2px; font-size: 12px; padding-top: 1px; }
+.note-num { flex: none; min-width: 18px; height: 18px; border-radius: 6px; background: #eef2ff; color: #4f46e5; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; padding: 0 3px; }
+.note-text { flex: 1; min-width: 0; }
+.note-del { flex: none; border: 0; background: transparent; color: #cbd5e1; font-size: 12px; padding: 0 4px; line-height: 1.5; }
+.note-del:hover { color: var(--red); }
 .note-more { font-size: 11px; color: #94a3b8; padding-top: 2px; }
 
 .plan-board-card h3 { display: flex; align-items: center; gap: 8px; }
@@ -214,3 +221,6 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 
 .notes-count { font-size: 11px; color: #94a3b8; padding-bottom: 3px; }
 .notes-plain { border-top: 1px dashed var(--line); margin: 2px 0 0; padding-top: 6px; }
+
+.note-mv { flex: none; border: 0; background: transparent; color: #cbd5e1; font-size: 9px; padding: 0 2px; line-height: 1.6; }
+.note-mv:hover { color: var(--primary); }

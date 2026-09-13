@@ -14,6 +14,8 @@
   let editingId = null;
   let noteTargetId = null;
   let dragId = null;
+  let noteDragZone = null;
+  let noteDragIndex = -1;
   let lastStatus = { text: '连接中…' };
 
   const items = () => store.files.tasks.value || [];
@@ -97,21 +99,32 @@
     return '<span class="chip ' + (cls || '') + '">' + esc(text) + '</span>';
   }
   /* 进展流水：最新一条在最上面，展示时间（今天/昨天/日期 + 时刻） */
-  function noteLineHTML(n) {
-    return '<div class="note-line"><i>' + esc(Core.fmtNoteTime(n, today())) + '</i>' + esc(n.text) + '</div>';
+  function noteLineHTML(item, entry, num) {
+    const n = entry.note;
+    return '<div class="note-line" draggable="true" data-id="' + item.id + '" data-note-index="' + entry.index + '">' +
+      '<span class="note-drag" title="按住拖动排序">⋮⋮</span>' +
+      '<b class="note-num">' + num + '</b>' +
+      '<i class="note-time">' + esc(Core.fmtNoteTime(n, today())) + '</i>' +
+      '<span class="note-text">' + esc(n.text) + '</span>' +
+      '<button class="note-mv" type="button" data-action="note-up" data-id="' + item.id + '" data-idx="' + entry.index + '" title="上移">▲</button>' +
+      '<button class="note-mv" type="button" data-action="note-down" data-id="' + item.id + '" data-idx="' + entry.index + '" title="下移">▼</button>' +
+      '<button class="note-del" type="button" data-action="note-del" data-id="' + item.id + '" data-idx="' + entry.index + '" title="删除这条进展">✕</button>' +
+      '</div>';
+  }
+  function notesBody(item) {
+    return Core.orderedNotes(item).map((e, i) => noteLineHTML(item, e, i + 1)).join('');
   }
   function notesZoneHTML(item) {
-    const notes = (item.notes || []).slice().reverse();
-    if (!notes.length) return '<div class="notes-zone empty-notes">还没有进展，第一条写在下面 ↓</div>';
-    return '<div class="notes-zone">' +
-      '<div class="notes-count">共 ' + notes.length + ' 条进展 · 最新在上</div>' +
-      notes.map(noteLineHTML).join('') + '</div>';
+    const count = (item.notes || []).length;
+    if (!count) return '<div class="notes-zone empty-notes">还没有进展，第一条写在下面 ↓</div>';
+    return '<div class="notes-zone" data-notes-for="' + item.id + '">' +
+      '<div class="notes-count">共 ' + count + ' 条进展 · 序号 1 在最上 · 可拖动排序</div>' + notesBody(item) + '</div>';
   }
   function notesListHTML(item) {
-    const notes = item.notes || [];
-    if (!notes.length) return '';
-    return '<div class="notes-zone notes-plain"><div class="notes-count">共 ' + notes.length + ' 条进展 · 最新在上</div>' +
-      notes.slice().reverse().map(noteLineHTML).join('') + '</div>';
+    const count = (item.notes || []).length;
+    if (!count) return '';
+    return '<div class="notes-zone notes-plain" data-notes-for="' + item.id + '">' +
+      '<div class="notes-count">共 ' + count + ' 条进展 · 序号 1 在最上</div>' + notesBody(item) + '</div>';
   }
   function noteInputHTML(id) {
     return '<form class="note-inline" data-id="' + id + '">' +
@@ -503,6 +516,45 @@
     });
   }
 
+  /* ---------- 进展拖动排序 ---------- */
+  function bindNoteDrag() {
+    document.querySelectorAll('.notes-zone[data-notes-for]').forEach((zone) => {
+      const lines = Array.prototype.slice.call(zone.querySelectorAll('.note-line'));
+      lines.forEach((line) => {
+        line.addEventListener('dragstart', (e) => {
+          noteDragZone = zone;
+          noteDragIndex = Number(line.dataset.noteIndex);
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', String(noteDragIndex));
+          line.classList.add('dragging');
+        });
+        line.addEventListener('dragend', () => { line.classList.remove('dragging'); noteDragZone = null; });
+        line.addEventListener('dragover', (e) => {
+          if (noteDragZone !== zone) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          line.classList.add('drag-over');
+        });
+        line.addEventListener('dragleave', () => line.classList.remove('drag-over'));
+        line.addEventListener('drop', (e) => {
+          if (noteDragZone !== zone) return;
+          e.preventDefault();
+          line.classList.remove('drag-over');
+          const item = byId(zone.dataset.notesFor);
+          if (!item) return;
+          const order = Array.prototype.map.call(zone.querySelectorAll('.note-line'), (l) => Number(l.dataset.noteIndex));
+          const from = order.indexOf(noteDragIndex);
+          const toPos = order.indexOf(Number(line.dataset.noteIndex));
+          if (from < 0 || toPos < 0 || from === toPos) return;
+          order.splice(from, 1);
+          order.splice(toPos, 0, noteDragIndex);
+          const r = Core.setNoteOrder(item, order);
+          if (r.changed) { store.saveTask(r.item); toast('进展顺序已保存'); }
+        });
+      });
+    });
+  }
+
   /* 每次渲染后绑定本页动态按钮（节点已被替换，不会重复） */
   function bindDynamicEvents() {
     const b = $('#btn-plan-add');
@@ -523,6 +575,7 @@
       toast('已添加，已同步到上方排序表');
     });
     bindPlanDrag();
+    bindNoteDrag();
     const s1 = $('#set-token-save'); if (s1) s1.addEventListener('click', saveToken);
     const s2 = $('#set-name-save'); if (s2) s2.addEventListener('click', () => {
       const n = $('#set-devname').value.trim();
@@ -602,6 +655,24 @@
       }
       if (action === 'edit' && item) { openItemModal(item.kind, item); return; }
       if (action === 'note' && item) { openNote(item); return; }
+      if (action === 'note-del' && item) {
+        const idx = Number(act.dataset.idx);
+        const r = Core.deleteNote(item, idx);
+        if (r.changed) { store.saveTask(r.item); toast('已删除这条进展'); }
+        return;
+      }
+      if ((action === 'note-up' || action === 'note-down') && item) {
+        const idx = Number(act.dataset.idx);
+        const order = Core.orderedNotes(item).map((e) => e.index);
+        const pos = order.indexOf(idx);
+        const to = action === 'note-up' ? pos - 1 : pos + 1;
+        if (pos < 0 || to < 0 || to >= order.length) return;
+        order.splice(pos, 1);
+        order.splice(to, 0, idx);
+        const r = Core.setNoteOrder(item, order);
+        if (r.changed) store.saveTask(r.item);
+        return;
+      }
       if (action === 'plan-done' && item) {
         const d = today();
         const was = !!item.done;

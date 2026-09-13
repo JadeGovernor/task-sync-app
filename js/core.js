@@ -86,9 +86,47 @@
     if (!t) return { item, changed: false };
     const next = JSON.parse(JSON.stringify(item));
     if (!Array.isArray(next.notes)) next.notes = [];
-    next.notes.push({ date: todayStr(), time: nowTime(), text: t });
+    let maxSeq = 0;
+    next.notes.forEach((n, i) => {
+      const s = typeof n.seq === 'number' ? n.seq : i + 1;
+      if (s > maxSeq) maxSeq = s;
+    });
+    next.notes.push({ date: todayStr(), time: nowTime(), text: t, seq: maxSeq + 1 });
     next.updatedAt = new Date().toISOString();
     return { item: next, changed: true };
+  }
+  /* 进展按 seq 从大到小 = 最新在最上面；老数据没有 seq 时用数组下标兜底 */
+  function orderedNotes(item) {
+    const arr = Array.isArray(item && item.notes) ? item.notes : [];
+    return arr.map((note, index) => ({
+      note, index,
+      seq: (note && typeof note.seq === 'number') ? note.seq : index + 1
+    })).sort((a, b) => b.seq - a.seq);
+  }
+  function deleteNote(item, index) {
+    const list = Array.isArray(item && item.notes) ? item.notes.slice() : [];
+    if (index < 0 || index >= list.length) return { item, changed: false };
+    list.splice(index, 1);
+    const next = Object.assign({}, item, { notes: list, updatedAt: new Date().toISOString() });
+    return { item: next, changed: true };
+  }
+  /* displayOrder = 数组下标数组，第一个是页面最上面那条 */
+  function setNoteOrder(item, displayOrder) {
+    const list = Array.isArray(item && item.notes) ? item.notes.slice() : [];
+    if (displayOrder.length !== list.length) return { item, changed: false };
+    const seen = {};
+    const reordered = displayOrder.map((i) => {
+      if (i < 0 || i >= list.length || seen[i]) return null;
+      seen[i] = true;
+      return Object.assign({}, list[i]);
+    });
+    if (reordered.some((n) => !n)) return { item, changed: false };
+    const N = reordered.length;
+    reordered.forEach((n, i) => { n.seq = N - i; });   // 最上面 seq 最大
+    const next = Object.assign({}, item, { notes: reordered, updatedAt: new Date().toISOString() });
+    const before = orderedNotes(item).map((e) => e.note.text).join('\u0001');
+    const after = orderedNotes(next).map((e) => e.note.text).join('\u0001');
+    return { item: next, changed: before !== after };
   }
 
   /* ---------- 文件级合并操作（离线队列与远程合并共用） ---------- */
@@ -274,7 +312,7 @@
   const api = {
     pad, dateStr, todayStr, parseDate, shiftDate, dayDiff, weekdayCN, fmtCN, uid,
     KINDS, FREQS, kindLabel, freqLabel, newItem,
-    fileDefault, addNote, fmtNoteTime, upsertItem, removeItem,
+    fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, upsertItem, removeItem,
     setCheckinDate, upsertDevice, applyOp,
     doneIdsFor, checkedOn, weekKey, weeklyDoneOn, dailyScheduledOn, habitOn,
     workStatus, planState, todayEntries, streakDays

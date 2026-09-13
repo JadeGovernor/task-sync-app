@@ -120,6 +120,31 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(r2.changed, false);
 }
 
+/* 进展：序号顺序 / 拖动排序 / 删除 */
+{
+  let it = Core.newItem({ kind: 'work', title: 'N' });
+  it = Core.addNote(it, '第一条').item;
+  it = Core.addNote(it, '第二条').item;
+  it = Core.addNote(it, '第三条').item;
+  // 默认最新在最上
+  assert.deepStrictEqual(Core.orderedNotes(it).map((e) => e.note.text), ['第三条', '第二条', '第一条']);
+  // 拖动：把最上面的第三条移到最下 → 顺序 第二/第一/第三
+  const order = Core.orderedNotes(it).map((e) => e.index); // [2,1,0]
+  const moved = [order[1], order[2], order[0]];
+  const r = Core.setNoteOrder(it, moved);
+  assert.strictEqual(r.changed, true);
+  it = r.item;
+  assert.deepStrictEqual(Core.orderedNotes(it).map((e) => e.note.text), ['第二条', '第一条', '第三条']);
+  // 相同顺序不重复写
+  assert.strictEqual(Core.setNoteOrder(it, Core.orderedNotes(it).map((e) => e.index)).changed, false);
+  // 删除“第二条”
+  const idxSecond = Core.orderedNotes(it).find((e) => e.note.text === '第二条').index;
+  const d = Core.deleteNote(it, idxSecond);
+  assert.strictEqual(d.changed, true);
+  assert.deepStrictEqual(Core.orderedNotes(d.item).map((e) => e.note.text), ['第一条', '第三条']);
+  assert.strictEqual(Core.deleteNote(d.item, 99).changed, false);
+}
+
 /* 文件操作：task_set / rank_set / 幂等 */
 {
   let list = [];

@@ -149,14 +149,15 @@
         '<div class="task-meta">' + (o.chips || []).map((c) => chip(c.text, c.cls)).join('') + '</div>' +
       '</div>';
     const cb = o.check ? cbHTML(item.id, o.done, o.date) : '';
-    const row = '<div class="task ' + (o.done ? 'is-done' : '') + (o.hot ? ' is-hot' : '') + (o.softGreen ? ' is-soft-green' : '') + '" data-id="' + item.id + '">' +
+    const row = '<div class="task ' + (o.done ? 'is-done' : '') + (o.hot ? ' is-hot' : '') + (o.softGreen ? ' is-soft-green' : '') + (o.compact ? ' is-compact' : '') + '" data-id="' + item.id + '">' +
       (o.handle ? '<span class="drag-handle" title="拖动排序">⋮⋮</span>' : '') +
       cb + body + '<div class="row-act">' + rowActions(item, o.extraActions || '', !o.notesZone) + '</div></div>';
     if (o.notesZone) {
+      if (o.compact) return row;
       return '<div class="item-card' + (o.hot ? ' is-hot' : '') + (o.softGreen ? ' is-soft-green' : '') + '" data-id="' + item.id + '">' +
         row + notesZoneHTML(item) + noteInputHTML(item.id) + '</div>';
     }
-    return row + (o.notesList ? notesListHTML(item) : '');
+    return row + (!o.compact && o.notesList ? notesListHTML(item) : '');
   }
   function section(title, body, extra, cls) {
     return '<section class="card ' + (cls || '') + '"><h3>' + esc(title) + '</h3>' + (extra || '') + body + '</section>';
@@ -232,16 +233,30 @@
   }
 
   /* ---------- 自律 ---------- */
-  function habitRow(item, date, checkins) {
+  function habitRow(item, date, checkins, opts) {
     const st = Core.habitOn(item, date, checkins);
     if (!st) return '';
+    const o = opts || {};
     const chips = [];
     chips.push({ text: st.kind === 'daily' ? '每日' : '每周 · 自 ' + item.created, cls: st.kind === 'daily' ? 'm-life' : 'dim' });
     if (st.kind === 'weekly') {
       chips.push({ text: st.done ? '本周已勾' : '本周待勾', cls: st.done ? 'ok' : 'warn' });
     }
     const softGreen = st.kind === 'daily' && !st.done;
-    return cardHTML(item, { check: true, done: st.done, date, chips, notesZone: true, softGreen });
+    return cardHTML(item, { check: true, done: st.done, date, chips, notesZone: !o.compact, softGreen, compact: !!o.compact });
+  }
+  /* 列表排序：未勾在上，已勾沉底；已勾紧凑显示 */
+  function habitCards(list, d, c) {
+    const rows = [];
+    list.forEach((h) => { const st = Core.habitOn(h, d, c); if (st) rows.push({ h, done: st.done }); });
+    rows.sort((a, b) => (a.done === b.done ? (a.h.created < b.h.created ? -1 : 1) : (a.done ? 1 : -1)));
+    const pending = rows.filter((r) => !r.done).map((r) => habitRow(r.h, d, c)).join('');
+    const done = rows.filter((r) => r.done);
+    const doneHTML = done.length
+      ? '<div class="done-sep">已完成 · ' + done.length + '（移至底部，紧凑显示）</div>' +
+        done.map((r) => habitRow(r.h, d, c, { compact: true })).join('')
+      : '';
+    return pending + doneHTML;
   }
 
   /* ---------- 今日首页 ---------- */
@@ -249,18 +264,31 @@
     const d = today();
     const te = Core.todayEntries(items(), checkins(), d);
     const pct = te.total ? Math.round((te.done / te.total) * 100) : 0;
-    const workRowsHtml = te.work.map((e) => {
+    const workRow = (e, compact) => {
       const chips = [];
+      chips.push({ text: '公司', cls: 'm-work' });
+      if (compact) return cardHTML(e.item, { check: true, done: true, date: d, chips, compact: true });
       if (e.overdue) chips.push({ text: '逾期自动顺延', cls: 'warn' });
       if (e.item.due) chips.push({ text: e.item.due, cls: 'dim' });
-      chips.push({ text: '公司', cls: 'm-work' });
       return cardHTML(e.item, { check: true, done: e.done, date: d, chips, notesList: true, hot: e.overdue && !e.done });
-    }).join('');
-    const habitHtml = te.habits.map((e) => {
+    };
+    const habitRowToday = (e, compact) => {
       const chips = [{ text: '自律 · 每日', cls: 'm-life' }];
+      if (compact) return cardHTML(e.item, { check: true, done: true, date: d, chips, compact: true });
       if (e.missed) chips.push({ text: '昨日未打勾', cls: 'warn' });
       return cardHTML(e.item, { check: true, done: e.done, date: d, chips, notesList: true, softGreen: e.missed && !e.done });
-    }).join('');
+    };
+    /* 未勾在上，已勾移到最下面并紧凑显示 */
+    const splitRows = (list, build) => {
+      const pend = list.filter((e) => !e.done).map((e) => build(e, false)).join('');
+      const done = list.filter((e) => e.done);
+      const doneHTML = done.length
+        ? '<div class="done-sep">已完成 · ' + done.length + '（移至底部，紧凑显示）</div>' + done.map((e) => build(e, true)).join('')
+        : '';
+      return pend + doneHTML;
+    };
+    const workRowsHtml = splitRows(te.work, workRow);
+    const habitHtml = splitRows(te.habits, habitRowToday);
     return section('今日效率', '<div class="progress">' +
       '<div class="progress-head"><span>' + Core.fmtCN(d) + '</span>' +
       '<span class="stat">' + (te.total ? te.done + '/' + te.total + ' · ' + pct + '%' : '今日无安排') +
@@ -312,15 +340,13 @@
   function renderDisc() {
     const d = today();
     const c = checkins();
-    const daily = itemOfKind('habit').filter((t) => t.freq === 'daily')
-      .sort((a, b) => (a.created < b.created ? -1 : 1)).map((t) => habitRow(t, d, c)).join('');
-    const weekly = itemOfKind('habit').filter((t) => t.freq === 'weekly')
-      .sort((a, b) => (a.created < b.created ? -1 : 1)).map((t) => habitRow(t, d, c)).join('');
+    const daily = habitCards(itemOfKind('habit').filter((t) => t.freq === 'daily'), d, c);
+    const weekly = habitCards(itemOfKind('habit').filter((t) => t.freq === 'weekly'), d, c);
     const wkStart = Core.weekKey(d);
     return section('日打勾', '<p class="hint">每天都要勾；昨天漏勾的会自动顺延到今天并标注「昨日未打勾」。</p>' +
       (daily || emptyBox('还没有每日习惯。点「＋新建」，类型选 自律、频率选 每日。')), '', 'acc-green') +
       section('周打勾 · 本周自 ' + wkStart, '<p class="hint">自然周（周一起）内勾一次即完成，下周一自动重置。</p>' +
-        (weekly || emptyBox('还没有每周习惯。点「＋新建」，类型选 自律、频率选 每周。')), '', 'acc-green');
+        (weekly || emptyBox('还没有每周习惯。点「＋新建」，类型选 自律、频率选 每周。')), '', 'acc-blue');
   }
 
   function renderEff() {

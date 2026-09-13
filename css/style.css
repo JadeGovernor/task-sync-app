@@ -233,3 +233,13 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 .task.is-soft-green { background: linear-gradient(90deg, #f0fdf4, transparent 65%); border-radius: 10px; }
 .item-card.is-soft-green { background: linear-gradient(180deg, #f2fdf5, #fff 55%); }
 .eff-row { border-left: 3px solid #93c5fd; padding-left: 8px; margin-left: 1px; color: #1e3a8a; }
+
+/* 已打勾：沉底 + 紧凑显示 */
+.done-sep { font-size: 11px; color: #94a3b8; padding: 10px 2px 2px; border-top: 1px dashed var(--line); margin-top: 8px; }
+.task.is-compact { padding: 2px 6px; gap: 6px; }
+.task.is-compact .task-title { font-size: 13px; color: #94a3b8; }
+.task.is-compact .task-meta { margin-top: 0; }
+.task.is-compact .chip { font-size: 10px; padding: 0 6px; }
+.task.is-compact .cb { width: 20px; height: 20px; }
+.task.is-compact .row-act { opacity: .7; }
+.task.is-compact .mini-btn { padding: 1px 6px; font-size: 11px; }

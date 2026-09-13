@@ -184,3 +184,30 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 @media (hover: hover) {
   .plan-board .task { cursor: grab; }
 }
+
+/* V2.1 进展流水：顶部展示 + 底部输入 */
+.item-card {
+  background: #fff; border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 10px 12px 12px; margin-bottom: 10px;
+}
+.item-card .task { padding: 4px 0 6px; border-bottom: 0; }
+.item-card.is-hot { background: linear-gradient(180deg, #fff5f5, #fff 55%); }
+.item-card.is-hot .task.is-hot { background: transparent; }
+.notes-zone { border-top: 1px dashed var(--line); margin: 2px 0 8px; padding-top: 6px; }
+.notes-zone .note-line { padding: 3px 0; }
+.notes-zone .note-line:first-child { color: var(--ink); font-weight: 500; }
+.empty-notes { color: #94a3b8; font-size: 12px; border-top: 1px dashed var(--line); padding: 8px 0 2px; }
+.note-rest summary { font-size: 12px; color: var(--muted); cursor: pointer; padding: 3px 0; }
+.note-inline { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.note-inline input {
+  flex: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #f8fafc;
+}
+.note-inline input:focus { background: #fff; }
+.note-inline button {
+  flex: none; border: 1px solid var(--primary); background: var(--primary); color: #fff;
+  padding: 8px 12px; border-radius: 10px; font-size: 13px;
+}
+.note-latest {
+  font-size: 12px; color: #475569; padding: 2px 0 2px 34px; line-height: 1.5; word-break: break-word;
+}
+.note-latest i { font-style: normal; color: #94a3b8; margin-right: 6px; font-size: 11px; }

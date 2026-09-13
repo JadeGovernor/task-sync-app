@@ -112,6 +112,10 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(r.changed, true);
   assert.strictEqual(r.item.notes.length, 1);
   assert.strictEqual(r.item.notes[0].text, '联系了供应商');
+  assert.match(r.item.notes[0].time, /^\d{2}:\d{2}$/);              // 进展带时刻
+  assert.strictEqual(Core.fmtNoteTime(r.item.notes[0], Core.todayStr()), '今天 ' + r.item.notes[0].time);
+  assert.strictEqual(Core.fmtNoteTime({ date: '2026-09-12', time: '08:05' }, '2026-09-13'), '昨天 08:05');
+  assert.strictEqual(Core.fmtNoteTime({ date: '2026-09-10' }, '2026-09-13'), '09-10');
   const r2 = Core.addNote(r.item, '   ');
   assert.strictEqual(r2.changed, false);
 }

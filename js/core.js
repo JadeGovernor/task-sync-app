@@ -68,12 +68,25 @@
   }
 
   /* ---------- 通用：备注流水 ---------- */
+  const nowTime = () => {
+    const d = new Date();
+    return pad(d.getHours()) + ':' + pad(d.getMinutes());
+  };
+  /* 进展时间显示：今天 14:32 / 昨天 09:05 / 09-11 20:10 */
+  function fmtNoteTime(note, today) {
+    if (!note || !note.date) return '';
+    const t = note.time ? ' ' + note.time : '';
+    const d = today || todayStr();
+    if (note.date === d) return '今天' + t;
+    if (note.date === shiftDate(d, -1)) return '昨天' + t;
+    return String(note.date).slice(5) + t;
+  }
   function addNote(item, text) {
     const t = (text || '').trim();
     if (!t) return { item, changed: false };
     const next = JSON.parse(JSON.stringify(item));
     if (!Array.isArray(next.notes)) next.notes = [];
-    next.notes.push({ date: todayStr(), text: t });
+    next.notes.push({ date: todayStr(), time: nowTime(), text: t });
     next.updatedAt = new Date().toISOString();
     return { item: next, changed: true };
   }
@@ -261,7 +274,7 @@
   const api = {
     pad, dateStr, todayStr, parseDate, shiftDate, dayDiff, weekdayCN, fmtCN, uid,
     KINDS, FREQS, kindLabel, freqLabel, newItem,
-    fileDefault, addNote, upsertItem, removeItem,
+    fileDefault, addNote, fmtNoteTime, upsertItem, removeItem,
     setCheckinDate, upsertDevice, applyOp,
     doneIdsFor, checkedOn, weekKey, weeklyDoneOn, dailyScheduledOn, habitOn,
     workStatus, planState, todayEntries, streakDays

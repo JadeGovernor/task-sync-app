@@ -96,17 +96,31 @@
   function chip(text, cls) {
     return '<span class="chip ' + (cls || '') + '">' + esc(text) + '</span>';
   }
-  function notesHTML(item, limit) {
-    const notes = (item.notes || []).slice();
-    const show = limit ? notes.slice(-limit) : notes;
-    if (!show.length) return '';
-    const more = notes.length > show.length ? '<div class="note-more">…共 ' + notes.length + ' 条进展</div>' : '';
-    return '<div class="notes">' +
-      show.map((n) => '<div class="note-line"><i>' + esc(n.date || '') + '</i>' + esc(n.text) + '</div>').join('') +
-      more + '</div>';
+  /* 进展流水：最新一条在最上面，展示时间（今天/昨天/日期 + 时刻） */
+  function noteLineHTML(n) {
+    return '<div class="note-line"><i>' + esc(Core.fmtNoteTime(n, today())) + '</i>' + esc(n.text) + '</div>';
   }
-  function rowActions(item, extra) {
-    return '<button class="mini-btn" type="button" data-action="note" data-id="' + item.id + '">＋进展</button>' +
+  function notesZoneHTML(item) {
+    const notes = (item.notes || []).slice().reverse();
+    if (!notes.length) return '<div class="notes-zone empty-notes">还没有进展，第一条写在下面 ↓</div>';
+    const latest = notes.slice(0, 3), rest = notes.slice(3);
+    return '<div class="notes-zone">' + latest.map(noteLineHTML).join('') +
+      (rest.length ? '<details class="note-rest"><summary>查看更早 ' + rest.length + ' 条</summary>' +
+        rest.map(noteLineHTML).join('') + '</details>' : '') + '</div>';
+  }
+  function latestNoteHTML(item) {
+    const notes = item.notes || [];
+    if (!notes.length) return '';
+    const n = notes[notes.length - 1];
+    return '<div class="note-latest"><i>' + esc(Core.fmtNoteTime(n, today())) + '</i>' + esc(n.text) + '</div>';
+  }
+  function noteInputHTML(id) {
+    return '<form class="note-inline" data-id="' + id + '">' +
+      '<input type="text" maxlength="300" placeholder="记一条进展，回车保存（自动带时间）…" />' +
+      '<button type="submit">记下</button></form>';
+  }
+  function rowActions(item, extra, showNoteBtn) {
+    return (showNoteBtn ? '<button class="mini-btn" type="button" data-action="note" data-id="' + item.id + '">＋进展</button>' : '') +
       '<button class="mini-btn" type="button" data-action="edit" data-id="' + item.id + '">✎</button>' +
       (extra || '');
   }
@@ -123,10 +137,14 @@
         '<div class="task-meta">' + (o.chips || []).map((c) => chip(c.text, c.cls)).join('') + '</div>' +
       '</div>';
     const cb = o.check ? cbHTML(item.id, o.done, o.date) : '';
-    return '<div class="task ' + (o.done ? 'is-done' : '') + (o.hot ? ' is-hot' : '') + '" data-id="' + item.id + '">' +
+    const row = '<div class="task ' + (o.done ? 'is-done' : '') + (o.hot ? ' is-hot' : '') + '" data-id="' + item.id + '">' +
       (o.handle ? '<span class="drag-handle" title="拖动排序">⋮⋮</span>' : '') +
-      cb + body + '<div class="row-act">' + rowActions(item, o.extraActions || '') + '</div></div>' +
-      (o.showNotes !== false ? notesHTML(item, o.limitNotes || 4) : '');
+      cb + body + '<div class="row-act">' + rowActions(item, o.extraActions || '', !o.notesZone) + '</div></div>';
+    if (o.notesZone) {
+      return '<div class="item-card' + (o.hot ? ' is-hot' : '') + '" data-id="' + item.id + '">' +
+        row + notesZoneHTML(item) + noteInputHTML(item.id) + '</div>';
+    }
+    return row + (o.latestNote ? latestNoteHTML(item) : '');
   }
   function section(title, body, extra) {
     return '<section class="card"><h3>' + esc(title) + '</h3>' + (extra || '') + body + '</section>';
@@ -147,13 +165,13 @@
       const row = (list, chips) => {
         const c = (w.overdue ? [{ text: '逾期', cls: 'warn' }] : []).concat(chips);
         if (t.due) c.push({ text: w.bucket === 'later' || w.bucket === 'tomorrow' ? t.due : (w.overdue ? '原定 ' + t.due : '今天'), cls: 'dim' });
-        list.push(cardHTML(t, { check: true, done: false, date: d, hot: !!w.overdue, chips: c, showNotes: false, extraActions: '' }));
+        list.push(cardHTML(t, { check: true, done: false, date: d, hot: !!w.overdue, chips: c, notesZone: true }));
       };
       if (w.bucket === 'today') row(tod, []);
       else if (w.bucket === 'tomorrow') row(tmw, []);
       else if (w.bucket === 'later') row(later, [{ text: '更晚', cls: 'dim' }]);
       else if (w.bucket === 'done') {
-        done.push(cardHTML(t, { check: true, done: true, date: d, chips: [{ text: t.doneDate === d ? '今日完成' : '已完成 ' + (t.doneDate || ''), cls: 'ok' }], showNotes: false }));
+        done.push(cardHTML(t, { check: true, done: true, date: d, chips: [{ text: t.doneDate === d ? '今日完成' : '已完成 ' + (t.doneDate || ''), cls: 'ok' }], notesZone: true }));
       }
     });
     const sortDue = (a, b) => { const x = byIdOf(a), y = byIdOf(b); const dx = x.due || '', dy = y.due || ''; return dx < dy ? -1 : dx > dy ? 1 : 0; };
@@ -193,7 +211,7 @@
     const doneBtn = st.bucket !== 'done'
       ? '<button class="mini-btn ok-mini" type="button" data-action="plan-done" data-id="' + t.id + '">完成</button>'
       : '<button class="mini-btn" type="button" data-action="plan-done" data-id="' + t.id + '">恢复</button>';
-    return cardHTML(t, { check: false, chips, showNotes: false, extraActions: doneBtn, hot: st.urgent });
+    return cardHTML(t, { check: false, chips, notesZone: true, extraActions: doneBtn, hot: st.urgent });
   }
   function nextRank() {
     let mx = 0;
@@ -211,7 +229,7 @@
       chips.push({ text: st.done ? '本周已勾' : '本周待勾', cls: st.done ? 'ok' : 'warn' });
     }
     const hot = st.kind === 'daily' && item.freq === 'daily' && !st.done;
-    return cardHTML(item, { check: true, done: st.done, date, chips, showNotes: false, hot, extraActions: '' });
+    return cardHTML(item, { check: true, done: st.done, date, chips, latestNote: true, hot });
   }
 
   /* ---------- 今日首页 ---------- */
@@ -224,12 +242,12 @@
       if (e.overdue) chips.push({ text: '逾期自动顺延', cls: 'warn' });
       if (e.item.due) chips.push({ text: e.item.due, cls: 'dim' });
       chips.push({ text: '公司', cls: 'm-work' });
-      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, showNotes: false, hot: e.overdue && !e.done });
+      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, latestNote: true, hot: e.overdue && !e.done });
     }).join('');
     const habitHtml = te.habits.map((e) => {
       const chips = [{ text: '自律 · 每日', cls: 'm-life' }];
       if (e.missed) chips.push({ text: '昨日未打勾', cls: 'warn' });
-      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, showNotes: false, hot: e.missed && !e.done });
+      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, latestNote: true, hot: e.missed && !e.done });
     }).join('');
     return section('今日效率', '<div class="progress">' +
       '<div class="progress-head"><span>' + Core.fmtCN(d) + '</span>' +
@@ -610,6 +628,25 @@
   });
 
   document.addEventListener('click', onViewClick);
+  /* 卡片底部输入框：回车/点“记下”即写入一条带时间的进展，并刷新到卡片顶部 */
+  document.addEventListener('submit', (e) => {
+    const form = e.target && e.target.closest ? e.target.closest('.note-inline') : null;
+    if (!form) return;
+    e.preventDefault();
+    const item = byId(form.dataset.id);
+    const input = form.querySelector('input');
+    if (!item || !input) return;
+    const text = (input.value || '').trim();
+    if (!text) return;
+    const r = Core.addNote(item, text);
+    if (!r.changed) return;
+    store.saveTask(r.item);
+    toast('进展已记录（含时间）');
+    requestAnimationFrame(() => {
+      const el = document.querySelector('.note-inline[data-id="' + item.id + '"] input');
+      if (el) el.focus();
+    });
+  });
   $('#task-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const kind = $('#f-kind').value;

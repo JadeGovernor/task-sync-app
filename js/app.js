@@ -101,7 +101,7 @@
   /* 进展流水：最新一条在最上面，展示时间（今天/昨天/日期 + 时刻） */
   function noteLineHTML(item, entry, num) {
     const n = entry.note;
-    return '<div class="note-line" draggable="true" data-id="' + item.id + '" data-note-index="' + entry.index + '">' +
+    return '<div class="note-line" data-id="' + item.id + '" data-note-index="' + entry.index + '">' +
       '<span class="note-drag" title="按住拖动排序">⋮⋮</span>' +
       '<b class="note-num">' + num + '</b>' +
       '<i class="note-time">' + esc(Core.fmtNoteTime(n, today())) + '</i>' +
@@ -159,8 +159,11 @@
         '<div class="task-meta">' + (o.chips || []).map((c) => chip(c.text, c.cls)).join('') + '</div>' +
       '</div>';
     const cb = o.check ? cbHTML(item.id, o.done, o.date) : '';
+    const badge = o.badge != null
+      ? '<span class="row-badge' + (o.badgeCls ? ' ' + o.badgeCls : '') + '">' + esc(String(o.badge)) + '</span>'
+      : '';
     const row = '<div class="task ' + (o.done ? 'is-done' : '') + (o.hot ? ' is-hot' : '') + (o.softGreen ? ' is-soft-green' : '') + (o.compact ? ' is-compact' : '') + '" data-id="' + item.id + '">' +
-      (o.handle ? '<span class="drag-handle" title="拖动排序">⋮⋮</span>' : '') +
+      (o.handle ? '<span class="drag-handle" title="拖动排序">⋮⋮</span>' : '') + badge +
       cb + body + '<div class="row-act">' + rowActions(item, o.extraActions || '', !o.notesZone, o.minimal) + '</div></div>';
     if (o.notesZone) {
       if (o.compact) return row;
@@ -174,6 +177,18 @@
   }
   function emptyBox(text) {
     return '<div class="empty">' + esc(text) + '</div>';
+  }
+  function goBtn(tab, label) {
+    return '<button class="link-btn" type="button" data-tab-go="' + tab + '">' + esc(label) + ' →</button>';
+  }
+  function emptyLine(text, tab, label) {
+    return '<div class="empty-line"><span>' + esc(text) + '</span>' + (tab ? goBtn(tab, label) : '') + '</div>';
+  }
+  function statPill(label, n, cls) {
+    return '<span class="stat-pill ' + (cls || '') + (n ? '' : ' is-zero') + '"><b>' + n + '</b>' + esc(label) + '</span>';
+  }
+  function countIn(title, n) {
+    return title + ' · ' + n + ' 条';
   }
   function chipClsFor(kind) {
     return kind === 'work' ? 'm-work' : kind === 'plan' ? 'm-plan' : 'm-life';
@@ -222,8 +237,9 @@
     acts.sort(cmp);
     return { active: acts, done: done.sort((a, b) => (a.item.doneDate || '') > (b.item.doneDate || '') ? -1 : 1), archived: arch };
   }
-  function planCard(e, compact) {
+  function planCard(e, compact, badge, minimal) {
     const t = e.item, st = e.st;
+    const isMini = minimal != null ? minimal : !!compact;
     const chips = [];
     chips.push({ text: Core.kindLabel('plan'), cls: chipClsFor('plan') });
     if (t.rangeStart || t.rangeEnd) {
@@ -234,7 +250,11 @@
     const doneBtn = st.bucket !== 'done'
       ? '<button class="mini-btn ok-mini" type="button" data-action="plan-done" data-id="' + t.id + '">完成</button>'
       : '<button class="mini-btn" type="button" data-action="plan-done" data-id="' + t.id + '">恢复</button>';
-    return cardHTML(t, { check: false, chips, notesZone: !compact, compact: !!compact, minimal: !!compact, extraActions: doneBtn, hot: !compact && st.urgent });
+    return cardHTML(t, {
+      check: false, chips, extraActions: doneBtn, hot: !compact && st.urgent,
+      notesZone: !compact && !isMini, compact: !!compact, minimal: isMini,
+      badge: badge != null ? badge : null, badgeCls: st.urgent ? 'is-urgent' : ''
+    });
   }
   function nextRank() {
     let mx = 0;
@@ -266,11 +286,12 @@
     return pending + doneHTML;
   }
 
-  /* ---------- 今日首页 ---------- */
+  /* ---------- 今日首页（公司 + 计划 + 自律 聚合） ---------- */
   function renderToday() {
     const d = today();
     const te = Core.todayEntries(items(), checkins(), d);
     const pct = te.total ? Math.round((te.done / te.total) * 100) : 0;
+
     const workRow = (e, compact) => {
       const chips = [];
       chips.push({ text: '公司', cls: 'm-work' });
@@ -293,51 +314,84 @@
     };
     const workRowsHtml = splitRows(te.work, workRow);
     const habitHtml = splitRows(te.habits, habitRowToday);
+
+    /* 计划：紧急优先，首页只摆前 5 条 */
+    const plans = planOrdered().active;
+    const planTop = plans.slice(0, 5);
+    const planRowToday = (e) => {
+      const t = e.item;
+      const chips = [{ text: '计划', cls: 'm-plan' }];
+      if (t.rangeStart || t.rangeEnd) chips.push({ text: (t.rangeStart || '?') + ' → ' + (t.rangeEnd || '持续'), cls: 'dim' });
+      if (e.st.urgent) chips.push({ text: '紧急 · 剩 ' + Math.max(0, Core.dayDiff(d, t.rangeEnd)) + ' 天', cls: 'warn' });
+      return cardHTML(t, { check: false, chips, notesList: true, hot: e.st.urgent });
+    };
+    const planHtml = planTop.map(planRowToday).join('') +
+      (plans.length > planTop.length
+        ? '<div class="more-line">还有 ' + (plans.length - planTop.length) + ' 条计划在进行中 ' + goBtn('plan', '去计划页') + '</div>'
+        : '');
+
+    const planCls = plans.some((e) => e.st.urgent) ? 'acc-red' : 'acc-amber';
     return section('今日效率', '<div class="progress">' +
       '<div class="progress-head"><span>' + Core.fmtCN(d) + '</span>' +
       '<span class="stat">' + (te.total ? te.done + '/' + te.total + ' · ' + pct + '%' : '今日无安排') +
       (te.streak ? ' · 🔥 连续 ' + te.streak + ' 天' : '') + '</span></div>' +
-      (te.total ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') + '</div>') +
-      (te.work.length ? section('公司 · 今日到期（逾期自动顺延）', workRowsHtml) : '') +
-      (te.habits.length ? section('自律 · 今日要勾（漏勾昨日会红字顺延）', habitHtml) : '') +
-      (!te.total ? '<section class="card"><p class="hint">今天没有安排。点右上「＋新建」，或在 公司/自律 模块添加条目。</p></section>' : '');
+      (te.total ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') +
+      '<div class="summary">' + statPill('公司今日', te.work.length, 's-blue') +
+      statPill('计划进行中', plans.length, 's-amber') +
+      statPill('自律今日', te.habits.length, 's-green') + '</div></div>') +
+      section(countIn('公司 · 今日到期', te.work.length),
+        workRowsHtml || emptyLine('今天没有到期的公司条目。', 'work', '去添加'), '', 'acc-blue') +
+      section(countIn('计划 · 进行中', plans.length),
+        planHtml || emptyLine('还没有进行中的计划方向。', 'plan', '去写一条'), '', planCls) +
+      section(countIn('自律 · 今日要勾', te.habits.length),
+        habitHtml || emptyLine('今天没有需要打勾的习惯。', 'disc', '去添加'), '', 'acc-green');
   }
 
-  /* ---------- 各模块页 ---------- */
+  /* ---------- 公司页 ---------- */
   function renderWork() {
     const b = workRows();
-    let html = '';
-    if (b.today.length) html += section('今日 · ' + b.today.length + '（逾期自动顺延到今天）', b.today.join(''));
-    else html += '<section class="card"><p class="hint">今日无事。点「＋新建」添加到期日=今天的公司条目。</p></section>';
-    if (b.tomorrow.length) html += section('明日 · ' + b.tomorrow.length + '（到点自动滚入今日）', b.tomorrow.join(''));
-    if (b.later.length) html += section('更晚 · ' + b.later.length, b.later.join(''));
-    if (b.done.length) html += section('已完成 · ' + b.done.length + '（已移至底部）', doneGrid(b.done));
+    const total = b.today.length + b.tomorrow.length + b.later.length;
+    let html = section('公司 · 总览',
+      '<div class="summary">' + statPill('今日', b.today.length, 's-blue') +
+      statPill('明日', b.tomorrow.length) +
+      statPill('更晚', b.later.length) +
+      statPill('已完成', b.done.length, 's-green') + '</div>' +
+      '<p class="hint tight">今日 / 明日 / 更晚按到期日自动分桶，逾期会自动顺延到今天。</p>', '', 'acc-blue');
+
+    html += section('今日 · ' + b.today.length + ' 条' + (b.today.some((h) => h.indexOf('is-hot') >= 0) ? ' · 含逾期顺延' : ''),
+      b.today.join('') || emptyLine('今日无事。', 'today', '回今日'),
+      '', b.today.length ? '' : 'is-quiet');
+    if (b.tomorrow.length) html += section('明日 · ' + b.tomorrow.length + ' 条', b.tomorrow.join(''));
+    if (b.later.length) html += section('更晚 · ' + b.later.length + ' 条', b.later.join(''), '', 'acc-slate');
+    if (b.done.length) html += section('已完成 · ' + b.done.length + ' 条', doneGrid(b.done), '', 'acc-slate');
+    if (!total && !b.done.length) html += emptyBox('还没有公司条目。点右上「＋新建」添加第一条。');
     return html;
   }
 
+  /* ---------- 计划页：单一可拖拽排序板（不再重复列两遍） ---------- */
   function renderPlan() {
-    const d = today();
     const g = planOrdered();
-    const urg = g.active.filter((e) => e.st.urgent);
-    const norm = g.active.filter((e) => !e.st.urgent);
-    const card = (e) => planCard(e);
-    const board = urg.map(card).concat(norm.map(card)).join('') ||
-      emptyBox('顶部为空：在下方写一条计划方向，会自动同步到这里。');
-    let html = '<section class="card plan-board-card"><h3>优先级排序 · 可拖动' +
-      (urg.length ? ' <span class="urgent-note">' + urg.length + ' 条紧急</span>' : '') + '</h3>' +
-      '<div class="plan-board" id="plan-board">' + board + '</div></section>';
-    html += '<section class="card plan-new-card"><h3>写计划方向（自动同步到上方排序表）</h3>' +
+    const urg = g.active.filter((e) => e.st.urgent).length;
+    const cards = g.active.map((e, i) => planCard(e, false, i + 1)).join('') ||
+      emptyBox('还没有进行中的方向：在下方写一条，会自动出现在这里。');
+
+    let html = '<section class="card plan-board-card' + (urg ? ' has-urgent' : '') + '">' +
+      '<h3>优先级排序 · 整条可拖动' +
+      (urg ? ' <span class="urgent-note">' + urg + ' 条紧急</span>' : '') +
+      ' <span class="cnt">' + g.active.length + ' 条</span></h3>' +
+      '<p class="hint tight">拖动任意位置即可改顺序；结束日最后 10 天会自动置顶到「紧急」。</p>' +
+      '<div class="plan-board" id="plan-board">' + cards + '</div></section>';
+
+    html += '<section class="card plan-new-card"><h3>写计划方向</h3>' +
       '<div class="field"><input id="p-title" type="text" maxlength="120" placeholder="大的计划方向，如：2026 Q4 换工作" /></div>' +
       '<div class="field-row">' +
       '<label class="field"><span>开始</span><input id="p-start" type="date" /></label>' +
       '<label class="field"><span>结束（最后 10 天自动置顶“紧急”）</span><input id="p-end" type="date" /></label></div>' +
       '<div class="actions-row"><button class="btn btn-primary" id="btn-plan-add" type="button">＋ 添加方向</button>' +
-      '<span class="hint">剩余 ' + g.active.length + ' 条进行中</span></div></section>';
-    if (g.active.length) {
-      html += '<section class="card"><h3>全部进行中 · ' + g.active.length + '（点开可看/补进展）</h3>' + g.active.map(card).join('') + '</section>';
-    }
-    if (g.archived.length) html += section('已结束（改结束日期可恢复）· ' + g.archived.length, g.archived.map(card).join(''), '');
-    if (g.done.length) html += section('已完成 · ' + g.done.length + '（已移至底部）', doneGrid(g.done.map((e) => planCard(e, true))), '');
+      '<span class="hint">目前 ' + g.active.length + ' 条进行中</span></div></section>';
+
+    if (g.archived.length) html += section('已结束 · ' + g.archived.length + ' 条（改结束日期可恢复）', g.archived.map((e) => planCard(e, true)).join(''), '', 'acc-slate');
+    if (g.done.length) html += section('已完成 · ' + g.done.length + ' 条', doneGrid(g.done.map((e) => planCard(e, false, null, true))), '', 'acc-slate');
     return html;
   }
 
@@ -508,79 +562,169 @@
   }
   function closeNote() { $('#note-backdrop').classList.add('hidden'); noteTargetId = null; }
 
+  /* ---------- 通用拖动排序：整条任意位置可拖（鼠标/触屏长按） ---------- */
+  const SORT_IGNORE = 'input, textarea, select, button, a, label, .cb, .notes-zone, .note-inline';
+  /* 活跃排序容器；页面重渲染后旧节点 isConnected=false，自动淘汰 */
+  const SORT_LIVE = [];
+  let sortGlobalsBound = false;
+  function bindSortGlobals() {
+    if (sortGlobalsBound) return;
+    sortGlobalsBound = true;
+    function each(fn) {
+      return (e) => {
+        for (let i = SORT_LIVE.length - 1; i >= 0; i -= 1) {
+          const inst = SORT_LIVE[i];
+          if (!inst.container.isConnected) { SORT_LIVE.splice(i, 1); continue; }
+          fn(inst, e);
+        }
+      };
+    }
+    /* 挂在 window 上：指针在容器外松开也能正常收尾 */
+    window.addEventListener('pointermove', each((i, e) => i.onMove(e)), { passive: false });
+    window.addEventListener('pointerup', each((i, e) => i.onUp(e)));
+    window.addEventListener('pointercancel', each((i, e) => i.onUp(e)));
+    window.addEventListener('touchmove', each((i, e) => i.onTouchMove(e)), { passive: false });
+  }
+
+  function makeSortable(container, opts) {
+    const itemSel = opts.itemSelector;
+    const ignoreSel = opts.ignoreSelector || SORT_IGNORE;
+    const keyOf = opts.keyOf;
+    const listItems = () => Array.prototype.slice.call(container.children).filter((el) => el.matches(itemSel));
+    /* 从点击目标向上找到「直接子节点」的可拖项 */
+    function itemFor(target) {
+      let el = target && target.closest ? target.closest(itemSel) : null;
+      let guard = 0;
+      while (el && el.parentElement !== container && guard < 20) {
+        el = el.parentElement ? el.parentElement.closest(itemSel) : null;
+        guard += 1;
+      }
+      return el && el.parentElement === container ? el : null;
+    }
+
+    let down = null;   // 已按下、还没越过拖动阈值
+    let drag = null;   // 正在拖动
+    let timer = null;
+
+    function startDrag(e, el) {
+      const rect = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      const ph = document.createElement('div');
+      ph.className = 'sort-ph';
+      ph.style.height = rect.height + 'px';
+      ph.style.marginBottom = cs.marginBottom;
+      container.insertBefore(ph, el);
+      document.body.appendChild(el);
+      el.classList.add('is-sorting');
+      el.style.width = rect.width + 'px';
+      el.style.height = rect.height + 'px';
+      el.style.left = rect.left + 'px';
+      el.style.top = rect.top + 'px';
+      drag = { el, ph, offsetY: e.clientY - rect.top, pointerId: e.pointerId, start: listItems().map(keyOf) };
+    }
+
+    function place(pointerY) {
+      const kids = Array.prototype.slice.call(container.children).filter((c) => c !== drag.ph && c.matches(itemSel));
+      let before = null;
+      for (let i = 0; i < kids.length; i += 1) {
+        const r = kids[i].getBoundingClientRect();
+        if (pointerY < r.top + r.height / 2) { before = kids[i]; break; }
+      }
+      if (before) container.insertBefore(drag.ph, before);
+      else container.appendChild(drag.ph);
+    }
+
+    function finish() {
+      const el = drag.el, ph = drag.ph, startOrder = drag.start;
+      drag = null;
+      el.classList.remove('is-sorting');
+      el.removeAttribute('style');
+      if (!ph.parentElement) { el.remove(); return; } // 拖动中被重渲染：丢掉漂浮副本
+      container.insertBefore(el, ph);
+      ph.remove();
+      const endOrder = listItems().map(keyOf);
+      if (startOrder.join('|') !== endOrder.join('|') && opts.onReorder) opts.onReorder(endOrder);
+    }
+
+    function onDown(e) {
+      if (drag) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.target.closest && e.target.closest(ignoreSel)) return;
+      const el = itemFor(e.target);
+      if (!el) return;
+      clearTimeout(timer);
+      down = { el, x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+      if (e.pointerType !== 'mouse') {
+        /* 触屏：长按 320ms 后才进入拖动，避开页面滚动 */
+        timer = setTimeout(() => {
+          if (!down) return;
+          const d = down;
+          down = null;
+          startDrag({ clientY: d.y, pointerId: d.pointerId }, d.el);
+        }, 320);
+      }
+    }
+
+    function onMove(e) {
+      if (down && !drag && e.pointerId === down.pointerId) {
+        if (Math.abs(e.clientY - down.y) < 6 && Math.abs(e.clientX - down.x) < 6) return;
+        clearTimeout(timer);
+        if (e.pointerType !== 'mouse') { down = null; return; } // 先滑动了：交给页面滚动
+        const d = down;
+        down = null;
+        startDrag(e, d.el);
+      }
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      if (e.cancelable) e.preventDefault();
+      drag.el.style.top = (e.clientY - drag.offsetY) + 'px';
+      place(e.clientY);
+    }
+
+    function onUp(e) {
+      clearTimeout(timer);
+      if (down && e.pointerId === down.pointerId) down = null;
+      if (drag && e.pointerId === drag.pointerId) finish();
+    }
+    function onTouchMove(e) { if (drag && e.cancelable) e.preventDefault(); }
+    bindSortGlobals();
+    for (let i = SORT_LIVE.length - 1; i >= 0; i -= 1) {
+      if (SORT_LIVE[i].container === container) SORT_LIVE.splice(i, 1); // 同一容器不重复绑定
+    }
+    SORT_LIVE.push({ container, onMove, onUp, onTouchMove });
+
+    container.addEventListener('pointerdown', onDown);
+    container.addEventListener('dragstart', (e) => e.preventDefault()); // 关掉浏览器原生拖拽
+  }
+
   /* ---------- 计划拖拽 ---------- */
   function bindPlanDrag() {
     const board = $('#plan-board');
     if (!board) return;
-    board.querySelectorAll('.task[data-id]').forEach((row) => {
-      row.draggable = true;
-      row.addEventListener('dragstart', (e) => {
-        dragId = row.dataset.id;
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', row.dataset.id);
-        row.classList.add('dragging');
-      });
-      row.addEventListener('dragend', () => { dragId = null; row.classList.remove('dragging'); });
-      row.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        row.classList.add('drag-over');
-      });
-      row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
-      row.addEventListener('drop', (e) => {
-        e.preventDefault();
-        row.classList.remove('drag-over');
-        const srcId = dragId || e.dataTransfer.getData('text/plain');
-        const tgtId = row.dataset.id;
-        if (!srcId || srcId === tgtId) return;
-        const ids = Array.prototype.map.call(board.querySelectorAll('.task[data-id]'), (r) => r.dataset.id);
-        const from = ids.indexOf(srcId);
-        const to = ids.indexOf(tgtId);
-        if (from < 0 || to < 0) return;
-        ids.splice(from, 1);
-        ids.splice(to, 0, srcId);
+    makeSortable(board, {
+      itemSelector: '.item-card, .task',
+      keyOf: (el) => el.dataset.id,
+      onReorder: (ids) => {
         const ranks = {};
         ids.forEach((id, i) => { ranks[id] = i + 1; });
         store.setRanks(ranks);
-      });
+        toast('顺序已保存');
+      }
     });
   }
 
   /* ---------- 进展拖动排序 ---------- */
   function bindNoteDrag() {
     document.querySelectorAll('.notes-zone[data-notes-for]').forEach((zone) => {
-      const lines = Array.prototype.slice.call(zone.querySelectorAll('.note-line'));
-      lines.forEach((line) => {
-        line.addEventListener('dragstart', (e) => {
-          noteDragZone = zone;
-          noteDragIndex = Number(line.dataset.noteIndex);
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', String(noteDragIndex));
-          line.classList.add('dragging');
-        });
-        line.addEventListener('dragend', () => { line.classList.remove('dragging'); noteDragZone = null; });
-        line.addEventListener('dragover', (e) => {
-          if (noteDragZone !== zone) return;
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
-          line.classList.add('drag-over');
-        });
-        line.addEventListener('dragleave', () => line.classList.remove('drag-over'));
-        line.addEventListener('drop', (e) => {
-          if (noteDragZone !== zone) return;
-          e.preventDefault();
-          line.classList.remove('drag-over');
+      makeSortable(zone, {
+        itemSelector: '.note-line',
+        ignoreSelector: 'input, textarea, select, button, a',
+        keyOf: (el) => Number(el.dataset.noteIndex),
+        onReorder: (order) => {
           const item = byId(zone.dataset.notesFor);
           if (!item) return;
-          const order = Array.prototype.map.call(zone.querySelectorAll('.note-line'), (l) => Number(l.dataset.noteIndex));
-          const from = order.indexOf(noteDragIndex);
-          const toPos = order.indexOf(Number(line.dataset.noteIndex));
-          if (from < 0 || toPos < 0 || from === toPos) return;
-          order.splice(from, 1);
-          order.splice(toPos, 0, noteDragIndex);
           const r = Core.setNoteOrder(item, order);
           if (r.changed) { store.saveTask(r.item); toast('进展顺序已保存'); }
-        });
+        }
       });
     });
   }

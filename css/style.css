@@ -243,3 +243,31 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 .task.is-compact .cb { width: 20px; height: 20px; }
 .task.is-compact .row-act { opacity: .7; }
 .task.is-compact .mini-btn { padding: 1px 6px; font-size: 11px; }
+
+/* 已完成条目：移到底部后压成多列网格，列宽变小，未勾的一眼可见 */
+.done-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px 6px; align-items: start; padding-top: 2px;
+}
+.done-grid .task.is-compact {
+  border-bottom: 0; border-radius: 8px; background: #f8fafc;
+  padding: 3px 6px; min-width: 0;
+}
+.done-grid .task.is-compact .task-main { min-width: 0; }
+.done-grid .task.is-compact .task-title {
+  font-size: 12.5px; font-weight: 400;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.done-grid .task.is-compact .task-meta { gap: 2px 4px; }
+.done-grid .task.is-compact .chip { font-size: 10px; padding: 0 5px; }
+.done-grid .task.is-compact .row-act { opacity: 1; gap: 2px; }
+.done-grid .task.is-compact .mini-btn {
+  border-color: transparent; background: transparent; color: #94a3b8;
+  padding: 0 4px; font-size: 12px;
+}
+.done-grid .task.is-compact .mini-btn:hover { color: var(--primary); }
+.done-grid .task.is-compact .mini-btn.ok-mini { color: var(--green); }
+.done-grid .task.is-compact .cb { width: 18px; height: 18px; }
+@media (max-width: 430px) {
+  .done-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+}

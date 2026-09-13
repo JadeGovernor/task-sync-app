@@ -131,10 +131,20 @@
       '<input type="text" maxlength="300" placeholder="记一条进展，回车保存（自动带时间）…" />' +
       '<button type="submit">记下</button></form>';
   }
-  function rowActions(item, extra, showNoteBtn) {
+  function rowActions(item, extra, showNoteBtn, minimal) {
+    if (minimal) {
+      return (extra || '') +
+        '<button class="mini-btn" type="button" data-action="edit" data-id="' + item.id + '">✎</button>';
+    }
     return (showNoteBtn ? '<button class="mini-btn" type="button" data-action="note" data-id="' + item.id + '">＋进展</button>' : '') +
       '<button class="mini-btn" type="button" data-action="edit" data-id="' + item.id + '">✎</button>' +
       (extra || '');
+  }
+  /* 已打勾：统一移到底部，并压缩成多列网格（列宽变小，一眼看到未勾的） */
+  function doneGrid(rows) {
+    if (!rows.length) return '';
+    return '<div class="done-sep">已完成 · ' + rows.length + ' 条 · 已移至底部，紧凑排列</div>' +
+      '<div class="done-grid">' + rows.join('') + '</div>';
   }
   function cbHTML(id, done, date) {
     return '<label class="cb">' +
@@ -151,7 +161,7 @@
     const cb = o.check ? cbHTML(item.id, o.done, o.date) : '';
     const row = '<div class="task ' + (o.done ? 'is-done' : '') + (o.hot ? ' is-hot' : '') + (o.softGreen ? ' is-soft-green' : '') + (o.compact ? ' is-compact' : '') + '" data-id="' + item.id + '">' +
       (o.handle ? '<span class="drag-handle" title="拖动排序">⋮⋮</span>' : '') +
-      cb + body + '<div class="row-act">' + rowActions(item, o.extraActions || '', !o.notesZone) + '</div></div>';
+      cb + body + '<div class="row-act">' + rowActions(item, o.extraActions || '', !o.notesZone, o.minimal) + '</div></div>';
     if (o.notesZone) {
       if (o.compact) return row;
       return '<div class="item-card' + (o.hot ? ' is-hot' : '') + (o.softGreen ? ' is-soft-green' : '') + '" data-id="' + item.id + '">' +
@@ -184,7 +194,7 @@
       else if (w.bucket === 'tomorrow') row(tmw, []);
       else if (w.bucket === 'later') row(later, [{ text: '更晚', cls: 'dim' }]);
       else if (w.bucket === 'done') {
-        done.push(cardHTML(t, { check: true, done: true, date: d, chips: [{ text: t.doneDate === d ? '今日完成' : '已完成 ' + (t.doneDate || ''), cls: 'ok' }], notesZone: true }));
+        done.push(cardHTML(t, { check: true, done: true, date: d, compact: true, minimal: true, chips: [{ text: t.doneDate === d ? '今日完成' : '已完成 ' + (t.doneDate || ''), cls: 'ok' }] }));
       }
     });
     const sortDue = (a, b) => { const x = byIdOf(a), y = byIdOf(b); const dx = x.due || '', dy = y.due || ''; return dx < dy ? -1 : dx > dy ? 1 : 0; };
@@ -212,7 +222,7 @@
     acts.sort(cmp);
     return { active: acts, done: done.sort((a, b) => (a.item.doneDate || '') > (b.item.doneDate || '') ? -1 : 1), archived: arch };
   }
-  function planCard(e) {
+  function planCard(e, compact) {
     const t = e.item, st = e.st;
     const chips = [];
     chips.push({ text: Core.kindLabel('plan'), cls: chipClsFor('plan') });
@@ -224,7 +234,7 @@
     const doneBtn = st.bucket !== 'done'
       ? '<button class="mini-btn ok-mini" type="button" data-action="plan-done" data-id="' + t.id + '">完成</button>'
       : '<button class="mini-btn" type="button" data-action="plan-done" data-id="' + t.id + '">恢复</button>';
-    return cardHTML(t, { check: false, chips, notesZone: true, extraActions: doneBtn, hot: st.urgent });
+    return cardHTML(t, { check: false, chips, notesZone: !compact, compact: !!compact, minimal: !!compact, extraActions: doneBtn, hot: !compact && st.urgent });
   }
   function nextRank() {
     let mx = 0;
@@ -243,7 +253,7 @@
       chips.push({ text: st.done ? '本周已勾' : '本周待勾', cls: st.done ? 'ok' : 'warn' });
     }
     const softGreen = st.kind === 'daily' && !st.done;
-    return cardHTML(item, { check: true, done: st.done, date, chips, notesZone: !o.compact, softGreen, compact: !!o.compact });
+    return cardHTML(item, { check: true, done: st.done, date, chips, notesZone: !o.compact, softGreen, compact: !!o.compact, minimal: !!o.minimal });
   }
   /* 列表排序：未勾在上，已勾沉底；已勾紧凑显示 */
   function habitCards(list, d, c) {
@@ -252,10 +262,7 @@
     rows.sort((a, b) => (a.done === b.done ? (a.h.created < b.h.created ? -1 : 1) : (a.done ? 1 : -1)));
     const pending = rows.filter((r) => !r.done).map((r) => habitRow(r.h, d, c)).join('');
     const done = rows.filter((r) => r.done);
-    const doneHTML = done.length
-      ? '<div class="done-sep">已完成 · ' + done.length + '（移至底部，紧凑显示）</div>' +
-        done.map((r) => habitRow(r.h, d, c, { compact: true })).join('')
-      : '';
+    const doneHTML = doneGrid(done.map((r) => habitRow(r.h, d, c, { compact: true, minimal: true })));
     return pending + doneHTML;
   }
 
@@ -267,14 +274,14 @@
     const workRow = (e, compact) => {
       const chips = [];
       chips.push({ text: '公司', cls: 'm-work' });
-      if (compact) return cardHTML(e.item, { check: true, done: true, date: d, chips, compact: true });
+      if (compact) return cardHTML(e.item, { check: true, done: true, date: d, chips, compact: true, minimal: true });
       if (e.overdue) chips.push({ text: '逾期自动顺延', cls: 'warn' });
       if (e.item.due) chips.push({ text: e.item.due, cls: 'dim' });
       return cardHTML(e.item, { check: true, done: e.done, date: d, chips, notesList: true, hot: e.overdue && !e.done });
     };
     const habitRowToday = (e, compact) => {
       const chips = [{ text: '自律 · 每日', cls: 'm-life' }];
-      if (compact) return cardHTML(e.item, { check: true, done: true, date: d, chips, compact: true });
+      if (compact) return cardHTML(e.item, { check: true, done: true, date: d, chips, compact: true, minimal: true });
       if (e.missed) chips.push({ text: '昨日未打勾', cls: 'warn' });
       return cardHTML(e.item, { check: true, done: e.done, date: d, chips, notesList: true, softGreen: e.missed && !e.done });
     };
@@ -282,10 +289,7 @@
     const splitRows = (list, build) => {
       const pend = list.filter((e) => !e.done).map((e) => build(e, false)).join('');
       const done = list.filter((e) => e.done);
-      const doneHTML = done.length
-        ? '<div class="done-sep">已完成 · ' + done.length + '（移至底部，紧凑显示）</div>' + done.map((e) => build(e, true)).join('')
-        : '';
-      return pend + doneHTML;
+      return pend + doneGrid(done.map((e) => build(e, true)));
     };
     const workRowsHtml = splitRows(te.work, workRow);
     const habitHtml = splitRows(te.habits, habitRowToday);
@@ -307,7 +311,7 @@
     else html += '<section class="card"><p class="hint">今日无事。点「＋新建」添加到期日=今天的公司条目。</p></section>';
     if (b.tomorrow.length) html += section('明日 · ' + b.tomorrow.length + '（到点自动滚入今日）', b.tomorrow.join(''));
     if (b.later.length) html += section('更晚 · ' + b.later.length, b.later.join(''));
-    if (b.done.length) html += section('已完成 · ' + b.done.length, b.done.join(''));
+    if (b.done.length) html += section('已完成 · ' + b.done.length + '（已移至底部）', doneGrid(b.done));
     return html;
   }
 
@@ -333,7 +337,7 @@
       html += '<section class="card"><h3>全部进行中 · ' + g.active.length + '（点开可看/补进展）</h3>' + g.active.map(card).join('') + '</section>';
     }
     if (g.archived.length) html += section('已结束（改结束日期可恢复）· ' + g.archived.length, g.archived.map(card).join(''), '');
-    if (g.done.length) html += section('已完成 · ' + g.done.length, g.done.map(card).join(''), '');
+    if (g.done.length) html += section('已完成 · ' + g.done.length + '（已移至底部）', doneGrid(g.done.map((e) => planCard(e, true))), '');
     return html;
   }
 

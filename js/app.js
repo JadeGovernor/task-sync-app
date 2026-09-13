@@ -140,10 +140,10 @@
       '<button class="mini-btn" type="button" data-action="edit" data-id="' + item.id + '">✎</button>' +
       (extra || '');
   }
-  /* 已打勾：统一移到底部，并压缩成多列网格（列宽变小，一眼看到未勾的） */
+  /* 已打勾：统一移到底部；宽屏多列紧凑排列，手机端单列 */
   function doneGrid(rows) {
     if (!rows.length) return '';
-    return '<div class="done-sep">已完成 · ' + rows.length + ' 条 · 已移至底部，紧凑排列</div>' +
+    return '<div class="done-sep">已完成 · ' + rows.length + ' 条 · 已移至底部</div>' +
       '<div class="done-grid">' + rows.join('') + '</div>';
   }
   function cbHTML(id, done, date) {

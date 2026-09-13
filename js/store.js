@@ -31,7 +31,7 @@
       this.apiBase = 'https://api.github.com/repos/' + this.cfg.owner + '/' + this.cfg.repo + '/contents/';
       this.files = {};
       ['tasks', 'checkins', 'settings'].forEach((f) => {
-        this.files[f] = { path: this.cfg.files[f], value: Core.fileDefault(f), sha: null, loaded: false };
+        this.files[f] = { path: this.cfg.files[f], value: Core.fileDefault(f), sha: null, etag: null, loaded: false };
       });
       this.onChange = null; // fn()
       this.onStatus = null; // fn({state,text,at})
@@ -90,11 +90,17 @@
       return h;
     }
 
-    async _fetchRemote(file) {
+    async _fetchRemote(file, conditional) {
       const rec = this.files[file];
-      const res = await fetch(this.apiBase + rec.path, { headers: this._headers(false) });
+      const headers = this._headers(false);
+      if (conditional && rec.etag) headers['If-None-Match'] = rec.etag;
+      const res = await fetch(this.apiBase + rec.path, { headers });
+      // 304：远端没变，直接复用本地副本。GitHub 对 304 不计速率配额。
+      if (res.status === 304) {
+        return { value: rec.value, sha: rec.sha, etag: rec.etag, notModified: true };
+      }
       if (res.status === 404) {
-        return { value: Core.fileDefault(file), sha: null };
+        return { value: Core.fileDefault(file), sha: null, etag: null };
       }
       if (!res.ok) {
         let msg = 'HTTP ' + res.status;
@@ -107,7 +113,7 @@
         throw err;
       }
       const j = await res.json();
-      return { value: JSON.parse(b64decode(j.content)), sha: j.sha };
+      return { value: JSON.parse(b64decode(j.content)), sha: j.sha, etag: res.headers.get('ETag') };
     }
 
     async _putRemote(file, value, sha, message) {
@@ -133,6 +139,10 @@
         throw err;
       }
       const j = await res.json();
+      if (rec) {
+        rec.sha = j.content ? j.content.sha : sha;
+        rec.etag = null; // 内容已变，下次拉取必须完整取一次以拿到新 ETag
+      }
       return j.content ? j.content.sha : sha;
     }
 
@@ -161,7 +171,7 @@
       }
       if (this.token) this.refresh(true);
       else this.setStatus('idle', '请先在「设置」中连接 GitHub Token');
-      this._timer = setInterval(() => this._heartbeat(), 20000);
+      this._timer = setInterval(() => this._heartbeat(), 5000);
       if (typeof window !== 'undefined') {
         window.addEventListener('online', () => {
           this.setStatus('syncing', '网络恢复，正在同步…');
@@ -184,21 +194,30 @@
       if (!this.token) return;
       if (!silent) this.setStatus('syncing', '同步中…');
       try {
+        let changed = false;
         await Promise.all(['tasks', 'checkins', 'settings'].map(async (f) => {
-          const remote = await this._fetchRemote(f);
-          this.files[f].sha = remote.sha;
-          this.files[f].value = remote.value;
-          this.files[f].loaded = true;
+          const rec = this.files[f];
+          // 只有本地已有一份完整副本时才带 ETag：命中即 304，省流量也省速率配额
+          const remote = await this._fetchRemote(f, rec.loaded && !!rec.etag);
+          if (remote.notModified) return;
+          const before = JSON.stringify(rec.value);
+          rec.etag = remote.etag || null;
+          rec.sha = remote.sha;
+          rec.value = remote.value;
+          rec.loaded = true;
+          if (before !== JSON.stringify(remote.value)) changed = true;
         }));
         // 若还有未上传的本地操作，物化后展示，避免刷新把本地改动“刷没”
         if (this._outbox().length) {
           ['tasks', 'checkins', 'settings'].forEach((f) => {
-            this.files[f].value = this._materialize(f);
+            const materialized = this._materialize(f);
+            if (JSON.stringify(materialized) !== JSON.stringify(this.files[f].value)) changed = true;
+            this.files[f].value = materialized;
           });
         }
         this._persistState();
         this.setStatus('ok', '已同步', new Date());
-        if (this.onChange) this.onChange();
+        if (changed && this.onChange) this.onChange();
       } catch (err) {
         if (this._isOffline(err)) {
           this.setStatus('offline', '离线模式：改动已存本地，联网后自动同步');

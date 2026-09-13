@@ -18,6 +18,17 @@
   let noteDragIndex = -1;
   let lastStatus = { text: '连接中…' };
 
+  /* 顶栏状态文案：同步成功时带上时刻，方便确认「实时同步」真的在跑 */
+  function statusText() {
+    const st = lastStatus || {};
+    if (st.state === 'ok' && st.at) {
+      const d = new Date(st.at);
+      const p = (n) => String(n).padStart(2, '0');
+      return '已同步 · ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+    return st.text || '';
+  }
+
   const items = () => store.files.tasks.value || [];
   const checkins = () => store.files.checkins.value || [];
   const settingsObj = () => store.files.settings.value || { devices: {} };
@@ -424,7 +435,6 @@
   function renderSettings() {
     const dev = myDevice();
     const name = dev.deviceName || (store.deviceGuess + ' · ' + store.deviceId.slice(-4));
-    const st = lastStatus;
     const hasToken = !!store.token;
     const def = Cfg.defaults;
     const d = settingsObj().devices[store.deviceId] || {};
@@ -439,7 +449,7 @@
       '<div class="field"><input id="set-token" type="password" value="' + esc(store.token) + '" placeholder="github_pat_…" autocomplete="off" /></div>' +
       '<div class="actions-row"><button class="btn btn-primary" id="set-token-save" type="button">' + (hasToken ? '保存并测试' : '连接') + '</button>' +
       '<button class="btn" id="set-sync-now" type="button">立即同步</button>' +
-      '<span class="hint">' + (hasToken ? '状态：' + esc(st.text) : '未连接') + '</span></div></section>' +
+      '<span class="hint">' + (hasToken ? '状态：' + esc(statusText()) : '未连接') + '</span></div></section>' +
       '<section class="card"><h3>设备：' + esc(name) + '</h3>' +
       '<div class="field"><label><span>设备显示名</span><input id="set-devname" type="text" value="' + esc(name) + '" maxlength="30" /></label></div>' +
       '<div class="actions-row"><button class="btn" id="set-name-save" type="button">保存设备名</button></div></section>' +
@@ -463,7 +473,7 @@
       label + (badge ? '<i>' + badge + '</i>' : '') + (extra || '') + '</button>';
   }
   function render() {
-    $('#subline').textContent = lastStatus.text;
+    $('#subline').textContent = statusText();
     const d = today();
     const te = Core.todayEntries(items(), checkins(), d);
     const todayBadge = te.total - te.done;
@@ -936,7 +946,7 @@
   $('#modal-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeItemModal(); });
   $('#note-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeNote(); });
 
-  store.onStatus = (st) => { lastStatus = st; $('#subline').textContent = st.text; };
+  store.onStatus = (st) => { lastStatus = st; $('#subline').textContent = statusText(); };
   store.onChange = () => render();
   render();
   store.init();

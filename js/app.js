@@ -149,17 +149,17 @@
         '<div class="task-meta">' + (o.chips || []).map((c) => chip(c.text, c.cls)).join('') + '</div>' +
       '</div>';
     const cb = o.check ? cbHTML(item.id, o.done, o.date) : '';
-    const row = '<div class="task ' + (o.done ? 'is-done' : '') + (o.hot ? ' is-hot' : '') + '" data-id="' + item.id + '">' +
+    const row = '<div class="task ' + (o.done ? 'is-done' : '') + (o.hot ? ' is-hot' : '') + (o.softGreen ? ' is-soft-green' : '') + '" data-id="' + item.id + '">' +
       (o.handle ? '<span class="drag-handle" title="拖动排序">⋮⋮</span>' : '') +
       cb + body + '<div class="row-act">' + rowActions(item, o.extraActions || '', !o.notesZone) + '</div></div>';
     if (o.notesZone) {
-      return '<div class="item-card' + (o.hot ? ' is-hot' : '') + '" data-id="' + item.id + '">' +
+      return '<div class="item-card' + (o.hot ? ' is-hot' : '') + (o.softGreen ? ' is-soft-green' : '') + '" data-id="' + item.id + '">' +
         row + notesZoneHTML(item) + noteInputHTML(item.id) + '</div>';
     }
     return row + (o.notesList ? notesListHTML(item) : '');
   }
-  function section(title, body, extra) {
-    return '<section class="card"><h3>' + esc(title) + '</h3>' + (extra || '') + body + '</section>';
+  function section(title, body, extra, cls) {
+    return '<section class="card ' + (cls || '') + '"><h3>' + esc(title) + '</h3>' + (extra || '') + body + '</section>';
   }
   function emptyBox(text) {
     return '<div class="empty">' + esc(text) + '</div>';
@@ -240,8 +240,8 @@
     if (st.kind === 'weekly') {
       chips.push({ text: st.done ? '本周已勾' : '本周待勾', cls: st.done ? 'ok' : 'warn' });
     }
-    const hot = st.kind === 'daily' && item.freq === 'daily' && !st.done;
-    return cardHTML(item, { check: true, done: st.done, date, chips, notesZone: true, hot });
+    const softGreen = st.kind === 'daily' && !st.done;
+    return cardHTML(item, { check: true, done: st.done, date, chips, notesZone: true, softGreen });
   }
 
   /* ---------- 今日首页 ---------- */
@@ -259,7 +259,7 @@
     const habitHtml = te.habits.map((e) => {
       const chips = [{ text: '自律 · 每日', cls: 'm-life' }];
       if (e.missed) chips.push({ text: '昨日未打勾', cls: 'warn' });
-      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, notesList: true, hot: e.missed && !e.done });
+      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, notesList: true, softGreen: e.missed && !e.done });
     }).join('');
     return section('今日效率', '<div class="progress">' +
       '<div class="progress-head"><span>' + Core.fmtCN(d) + '</span>' +
@@ -317,10 +317,10 @@
     const weekly = itemOfKind('habit').filter((t) => t.freq === 'weekly')
       .sort((a, b) => (a.created < b.created ? -1 : 1)).map((t) => habitRow(t, d, c)).join('');
     const wkStart = Core.weekKey(d);
-    return section('日打勾', '<p class="hint">每天都要勾；昨天漏勾的会自动顺延到今天并标红「昨日未打勾」。</p>' +
-      (daily || emptyBox('还没有每日习惯。点「＋新建」，类型选 自律、频率选 每日。'))) +
+    return section('日打勾', '<p class="hint">每天都要勾；昨天漏勾的会自动顺延到今天并标注「昨日未打勾」。</p>' +
+      (daily || emptyBox('还没有每日习惯。点「＋新建」，类型选 自律、频率选 每日。')), '', 'acc-green') +
       section('周打勾 · 本周自 ' + wkStart, '<p class="hint">自然周（周一起）内勾一次即完成，下周一自动重置。</p>' +
-        (weekly || emptyBox('还没有每周习惯。点「＋新建」，类型选 自律、频率选 每周。')));
+        (weekly || emptyBox('还没有每周习惯。点「＋新建」，类型选 自律、频率选 每周。')), '', 'acc-green');
   }
 
   function renderEff() {
@@ -334,7 +334,7 @@
       '<div class="eff-row">' + (wOn ? '☀️ 早起闹钟 ' + esc(wake) : '☀️ 早起未启用') + '</div>' +
       '<div class="eff-row">' + (sOn ? '🌙 早睡提醒 ' + esc(sleep) + ' · 熄灯+听英语博客' : '🌙 早睡提醒未启用') + '</div>' +
       '<div class="actions-row"><button class="btn" type="button" data-tab-go="settings">去设置里改时间</button>' +
-      '<span class="hint">音频导入步骤见仓库 DEPLOY.md</span></div>');
+      '<span class="hint">音频导入步骤见仓库 DEPLOY.md</span></div>', '', 'acc-blue');
   }
 
   function renderSettings() {

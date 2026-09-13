@@ -9,6 +9,13 @@
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+  /* 从自己的 script 标签上取版本号：设置页会显示出来，方便确认这台设备到底更新了没 */
+  const APP_VERSION = (function () {
+    const tag = document.querySelector('script[src*="app.js"]');
+    const m = tag && tag.src.match(/[?&]v=(\d+)/);
+    return m ? ('v' + m[1]) : '';
+  })();
+  const LATEST_VERSION = Cfg.version ? ('v' + Cfg.version) : '';
   const store = new window.Store(Cfg);
   let current = 'today';
   let editingId = null;
@@ -545,7 +552,8 @@
       '<span class="hint">' + (hasToken ? '状态：' + esc(statusText()) : '未连接') + '</span></div></section>' +
       '<section class="card"><h3>设备：' + esc(name) + '</h3>' +
       '<div class="field"><label><span>设备显示名</span><input id="set-devname" type="text" value="' + esc(name) + '" maxlength="30" /></label></div>' +
-      '<div class="actions-row"><button class="btn" id="set-name-save" type="button">保存设备名</button></div></section>' +
+      '<div class="actions-row"><button class="btn" id="set-name-save" type="button">保存设备名</button>' +
+      '<span class="hint">本机版本 ' + esc(APP_VERSION || '未知') + (APP_VERSION === LATEST_VERSION ? '（最新）' : '（有新版本，刷新一次页面即可）') + '</span></div></section>' +
       '<section class="card"><h3>效率 · 早睡早起（二期，iPhone 为主）</h3>' +
       '<div class="row"><label class="switch-line"><input id="set-wake-on" type="checkbox"' + (wOn ? ' checked' : '') + ' /> 早起闹钟</label>' +
       '<input id="set-wake-time" type="time" value="' + esc(wake) + '" /></div>' +

@@ -27,6 +27,7 @@
   /* 六种大条目：公司任务 / 计划方向 / 自律习惯 / 习惯清单 / 琐事备忘录 / 创意备忘录 */
   const KINDS = [
     { id: 'work', label: '公司' },
+    { id: 'loop', label: '循环任务' },
     { id: 'plan', label: '计划' },
     { id: 'habit', label: '自律' },
     { id: 'keep', label: '习惯' },
@@ -37,6 +38,9 @@
     { id: 'daily', label: '每日习惯（每天都要勾）' },
     { id: 'weekly', label: '每周习惯（本周勾一次）' }
   ];
+  /* 循环任务用：0=周日 … 6=周六，与 Date.getDay() 一致 */
+  const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
   const kindLabel = (id) => (KINDS.find((k) => k.id === id) || { label: id }).label;
   const freqLabel = (id) => (FREQS.find((f) => f.id === id) || { label: id }).label;
 
@@ -58,6 +62,9 @@
       base.due = todayStr();
       base.done = false;
       base.doneDate = null;
+    } else if (partial && partial.kind === 'loop') {
+      base.weekdays = [];     // 每周哪几天要做（0=周日…6=周六）
+      base.doneWeeks = [];    // 已完成的自然周（存该周周一日期），下周一自动重新出现
     } else if (partial && partial.kind === 'habit') {
       base.freq = 'daily';      // daily | weekly
       base.weeksDone = [];      // weekly：已完成的周（周一日期）
@@ -327,6 +334,59 @@
     return { bucket: 'later', due };
   }
 
+  /* ---------- 公司：循环任务（每周固定某几天，到日子自动进「今日」最前面） ---------- */
+  const loopWeekdays = (item) => {
+    const raw = Array.isArray(item && item.weekdays) ? item.weekdays : [];
+    const set = [];
+    raw.forEach((n) => {
+      const v = Number(n);
+      if (v >= 0 && v <= 6 && set.indexOf(v) < 0) set.push(v);
+    });
+    return set.sort((a, b) => a - b);
+  };
+  /* 一周内的先后：周一=0 … 周日=6 */
+  const weekIndex = (date) => (parseDate(date).getDay() + 6) % 7;
+
+  function loopState(item, date) {
+    if (!item || item.kind !== 'loop') return null;
+    const wds = loopWeekdays(item);
+    if (!wds.length) return null;
+    const started = !item.created || item.created <= date;   // 还没到创建那天不算
+    const wk = weekKey(date);
+    const done = Array.isArray(item.doneWeeks) && item.doneWeeks.indexOf(wk) >= 0;
+    const idx = wds.map((w) => (w + 6) % 7).sort((a, b) => a - b);
+    const today = started && idx.indexOf(weekIndex(date)) >= 0;
+    return {
+      week: wk, weekdays: wds, done, today, started,
+      missed: started && !done && idx[idx.length - 1] < weekIndex(date) // 本周该做的日子都过了还没勾
+    };
+  }
+  /* 今天要做 → 返回状态；否则 null（「今日」页只收当天该做的循环任务） */
+  function loopOn(item, date) {
+    const st = loopState(item, date);
+    return st && st.today ? st : null;
+  }
+  /* 打勾 = 本周这个循环任务完成；下周一自动重新出现 */
+  function setLoopDone(item, date, done) {
+    const wk = weekKey(date);
+    const set = Array.isArray(item.doneWeeks) ? item.doneWeeks.slice() : [];
+    const i = set.indexOf(wk);
+    const changed = done ? i < 0 : i >= 0;
+    if (done && i < 0) set.push(wk);
+    if (!done && i >= 0) set.splice(i, 1);
+    set.sort();
+    const next = JSON.parse(JSON.stringify(item));
+    next.doneWeeks = set;
+    next.updatedAt = new Date().toISOString();
+    return { item: next, changed };
+  }
+  function loopLabel(item) {
+    const wds = loopWeekdays(item);
+    if (!wds.length) return '未选星期';
+    if (wds.length === 7) return '每天';
+    return '每周 ' + wds.map((w) => WEEKDAY_SHORT[w]).join('·');
+  }
+
   /* ---------- 计划：紧急 / 归档 / 排序 ---------- */
   function planState(item, date) {
     if (item.kind !== 'plan') return null;
@@ -347,6 +407,7 @@
   function todayEntries(items, checkins, date) {
     const work = [];
     const habits = [];
+    const loops = [];
     (items || []).forEach((t) => {
       if (t.kind === 'work') {
         const w = workStatus(t, date);
@@ -354,6 +415,9 @@
         else if (w && w.bucket === 'done' && w.doneDate === date && (t.due || date) <= date) {
           work.push({ item: t, done: true, overdue: false }); // 今天刚做完的
         }
+      } else if (t.kind === 'loop') {
+        const l = loopOn(t, date);
+        if (l) loops.push({ item: t, done: l.done, week: l.week });
       } else if (t.kind === 'habit' && t.freq === 'daily') {
         const h = habitOn(t, date, checkins);
         if (h) {
@@ -365,9 +429,10 @@
     });
     // 逾期自动顺延到今天，红字标记
     work.sort((a, b) => (a.overdue === b.overdue ? 0 : a.overdue ? -1 : 1));
-    const total = work.length + habits.length;
-    const done = work.filter((e) => e.done).length + habits.filter((e) => e.done).length;
-    return { work, habits, total, done, streak: streakDays(items, checkins, date) };
+    const total = work.length + habits.length + loops.length;
+    const done = work.filter((e) => e.done).length + habits.filter((e) => e.done).length +
+      loops.filter((e) => e.done).length;
+    return { work, habits, loops, total, done, streak: streakDays(items, checkins, date) };
   }
 
   /* 每日习惯的连续达标天数（不含公司/计划；某天没习惯视为达标，有未勾即断） */
@@ -393,6 +458,7 @@
   const api = {
     pad, dateStr, todayStr, parseDate, shiftDate, dayDiff, weekdayCN, fmtCN, uid,
     KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered, memoOf, memoText,
+    WEEKDAY_LABELS, WEEKDAY_SHORT, loopWeekdays, loopLabel, loopState, loopOn, setLoopDone, weekIndex,
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, setNoteDone, editNote, noteDone, upsertItem, removeItem,
     setCheckinDate, upsertDevice, applyOp,
     doneIdsFor, checkedOn, weekKey, weeklyDoneOn, dailyScheduledOn, habitOn,

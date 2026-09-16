@@ -6,10 +6,10 @@
   <title>效率任务 · 三端同步</title>
   <meta name="description" content="今日聚合 + 公司/计划/自律/习惯/琐事/效率，Mac + iPhone 三端同步" />
   <meta name="theme-color" content="#0f172a" />
-  <link rel="manifest" href="./manifest.webmanifest?v=22" />
+  <link rel="manifest" href="./manifest.webmanifest?v=23" />
   <link rel="icon" type="image/png" href="./icons/icon-192.png" />
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
-  <link rel="stylesheet" href="./css/style.css?v=22" />
+  <link rel="stylesheet" href="./css/style.css?v=23" />
 </head>
 <body>
   <header class="topbar">
@@ -64,6 +64,10 @@
           <select id="f-freq"></select>
         </label>
       </div>
+      <div class="field fg-loop">
+        <span>每周哪几天（可多选；到那天自动出现在「今日」最上面）</span>
+        <div class="wd-picker" id="f-weekdays"></div>
+      </div>
       <div class="field">
         <label>
           <span id="f-note-label">首条备注（可选）</span>
@@ -109,9 +113,9 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./js/config.js?v=22"></script>
-  <script src="./js/core.js?v=22"></script>
-  <script src="./js/store.js?v=22"></script>
-  <script src="./js/app.js?v=22"></script>
+  <script src="./js/config.js?v=23"></script>
+  <script src="./js/core.js?v=23"></script>
+  <script src="./js/store.js?v=23"></script>
+  <script src="./js/app.js?v=23"></script>
 </body>
 </html>

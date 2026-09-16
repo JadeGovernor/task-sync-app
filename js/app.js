@@ -218,7 +218,7 @@
       : '';
     const row = '<div class="task ' + (o.done ? 'is-done' : '') + (o.hot ? ' is-hot' : '') + (o.softGreen ? ' is-soft-green' : '') + (o.compact ? ' is-compact' : '') + '" data-id="' + item.id + '">' +
       (o.handle ? '<span class="drag-handle" title="拖动排序">⋮⋮</span>' : '') + badge +
-      cb + body + '<div class="row-act">' + rowActions(item, o.extraActions || '', !o.notesZone, o.minimal) + '</div></div>';
+      cb + body + '<div class="row-act">' + rowActions(item, o.extraActions || '', !o.notesZone && !o.noNoteBtn, o.minimal) + '</div></div>';
     if (o.notesZone) {
       if (o.compact) return row;
       return '<div class="item-card' + (o.hot ? ' is-hot' : '') + (o.softGreen ? ' is-soft-green' : '') + '" data-id="' + item.id + '">' +
@@ -245,8 +245,24 @@
     return title + ' · ' + n + ' 条';
   }
   function chipClsFor(kind) {
+    if (kind === 'loop') return 'm-loop';
     return kind === 'work' ? 'm-work' : kind === 'plan' ? 'm-plan' : 'm-life';
   }
+  /* 星期多选：周一到周日（值跟 Date.getDay 一致，周日 = 0） */
+  const WD_ORDER = [1, 2, 3, 4, 5, 6, 0];
+  function wdPickerHTML(selected) {
+    const sel = selected || [];
+    return WD_ORDER.map((w) =>
+      '<label class="wd' + (sel.indexOf(w) >= 0 ? ' on' : '') + '">' +
+      '<input type="checkbox" value="' + w + '"' + (sel.indexOf(w) >= 0 ? ' checked' : '') + ' />' +
+      '<span>' + Core.WEEKDAY_SHORT[w] + '</span></label>').join('');
+  }
+  function readWeekdays(container) {
+    if (!container) return [];
+    return Array.prototype.slice.call(container.querySelectorAll('input:checked'))
+      .map((i) => Number(i.value)).sort((a, b) => a - b);
+  }
+  const todayWeekday = () => new Date().getDay();
 
   /* ---------- 公司 ---------- */
   function workRows() {
@@ -269,6 +285,52 @@
     const sortDue = (a, b) => { const x = byIdOf(a), y = byIdOf(b); const dx = x.due || '', dy = y.due || ''; return dx < dy ? -1 : dx > dy ? 1 : 0; };
     function byIdOf(html) { return html.match(/data-id="([^"]+)"/)[1]; }
     return { today: tod.sort(sortDue), tomorrow: tmw.sort(sortDue), later: later.sort(sortDue), done };
+  }
+
+  /* ---------- 公司：循环任务（每周固定某几天） ---------- */
+  function loopCard(item, st, d, compact) {
+    const chips = [{ text: Core.loopLabel(item), cls: 'm-loop' }];
+    if (st.done) chips.push({ text: '本周已完成', cls: 'ok' });
+    else if (st.today) chips.push({ text: '今天要做', cls: 'warn' });
+    else if (st.missed) chips.push({ text: '本周已过', cls: 'dim' });
+    else chips.push({ text: '本周待做', cls: 'dim' });
+    return cardHTML(item, {
+      check: true, done: st.done, date: d, chips, noNoteBtn: true,
+      compact: !!compact, minimal: !!compact
+    });
+  }
+  function loopRows() {
+    const d = today();
+    const rows = itemOfKind('loop')
+      .map((t) => ({ t, st: Core.loopState(t, d) }))
+      .filter((r) => r.st);
+    const firstWd = (r) => {
+      const w = r.st.weekdays.map((x) => (x + 6) % 7).sort((a, b) => a - b);
+      return w.length ? w[0] : 9;
+    };
+    rows.sort((a, b) =>
+      (a.st.done ? 1 : 0) - (b.st.done ? 1 : 0) ||
+      (a.st.today === b.st.today ? 0 : (a.st.today ? -1 : 1)) ||
+      firstWd(a) - firstWd(b) ||
+      (a.t.created < b.t.created ? -1 : 1));
+    return { list: rows, d };
+  }
+  function renderLoopSection() {
+    const r = loopRows();
+    const pend = r.list.filter((x) => !x.st.done).map((x) => loopCard(x.t, x.st, r.d)).join('');
+    const done = r.list.filter((x) => x.st.done);
+    const body = r.list.length
+      ? pend + (done.length ? doneGrid(done.map((x) => loopCard(x.t, x.st, r.d, true))) : '')
+      : emptyBox('还没有循环任务。在下面选「周几」加一条，到那天它会自动出现在「今日」最上面。');
+    return '<section class="card loop-card">' +
+      '<h3>循环任务 · 每周固定要做 <span class="cnt">' + r.list.length + ' 条</span></h3>' +
+      '<p class="hint tight">到那一天自动置顶到「今日」最上面；打勾后从今日消失，本周不再提醒，下周一自动重新出现。</p>' +
+      body +
+      '<form id="loop-form" class="loop-add">' +
+      '<input id="lp-title" type="text" maxlength="120" placeholder="例如：每周一交周报 / 每周五写总结" />' +
+      '<div class="wd-picker" id="lp-weekdays">' + wdPickerHTML([todayWeekday()]) + '</div>' +
+      '<button class="btn btn-primary" type="submit">＋ 加为循环任务</button>' +
+      '</form></section>';
   }
 
   /* ---------- 计划排序 ---------- */
@@ -480,13 +542,30 @@
         ? '<div class="more-line">还有 ' + (plans.length - planTop.length) + ' 条计划在进行中 ' + goBtn('plan', '去计划页') + '</div>'
         : '');
 
+    /* 循环任务：今天该做的置顶；打勾后从今日消失（沉到公司页底部） */
+    const loopAll = te.loops;
+    const loopPend = loopAll.filter((e) => !e.done);
+    const loopDoneN = loopAll.length - loopPend.length;
+    const loopRowToday = (e) => cardHTML(e.item, {
+      check: true, done: false, date: d, hot: true, noNoteBtn: true,
+      chips: [{ text: '循环 · ' + Core.loopLabel(e.item), cls: 'm-loop' }, { text: '今天要做', cls: 'warn' }]
+    });
+    const loopHtml = loopAll.length
+      ? section('今日循环任务 · ' + loopPend.length + ' 条待做',
+          (loopPend.map(loopRowToday).join('') ||
+            '<div class="empty-line"><span>今天的循环任务都做完了 ✓</span></div>') +
+          (loopDoneN ? '<p class="hint tight">已打勾 ' + loopDoneN + ' 条 · 已沉到「公司」页底部的循环任务里（本周不再提醒）</p>' : ''),
+          '', 'acc-indigo')
+      : '';
+
     const planCls = plans.some((e) => e.st.urgent) ? 'acc-red' : 'acc-amber';
-    return section('今日效率', '<div class="progress">' +
+    return loopHtml + section('今日效率', '<div class="progress">' +
       '<div class="progress-head"><span>' + Core.fmtCN(d) + '</span>' +
       '<span class="stat">' + (te.total ? te.done + '/' + te.total + ' · ' + pct + '%' : '今日无安排') +
       (te.streak ? ' · 🔥 连续 ' + te.streak + ' 天' : '') + '</span></div>' +
       (te.total ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') +
-      '<div class="summary">' + statPill('公司今日', te.work.length, 's-blue') +
+      '<div class="summary">' + statPill('循环今日', loopAll.length, 's-indigo') +
+      statPill('公司今日', te.work.length, 's-blue') +
       statPill('计划进行中', plans.length, 's-amber') +
       statPill('自律今日', te.habits.length, 's-green') + '</div></div>') +
       section(countIn('公司 · 今日到期', te.work.length),
@@ -515,6 +594,7 @@
     if (b.later.length) html += section('更晚 · ' + b.later.length + ' 条', b.later.join(''), '', 'acc-slate');
     if (b.done.length) html += section('已完成 · ' + b.done.length + ' 条', doneGrid(b.done), '', 'acc-slate');
     if (!total && !b.done.length) html += emptyBox('还没有公司条目。点右上「＋新建」添加第一条。');
+    html += renderLoopSection();
     return html;
   }
 
@@ -680,16 +760,18 @@
     $('#f-range-start').value = item && item.rangeStart ? item.rangeStart : '';
     $('#f-range-end').value = item && item.rangeEnd ? item.rangeEnd : '';
     $('#f-freq').value = item && item.freq ? item.freq : 'daily';
+    $('#f-weekdays').innerHTML = wdPickerHTML(item && item.kind === 'loop' ? Core.loopWeekdays(item) : [todayWeekday()]);
     applyKindFields(kind);
     $('#btn-delete-task').classList.toggle('hidden', !item);
     $('#modal-backdrop').classList.remove('hidden');
     $('#f-title').focus();
   }
   function applyKindFields(kind) {
-    const kw = kind === 'work', kp = kind === 'plan', kh = kind === 'habit';
+    const kw = kind === 'work', kp = kind === 'plan', kh = kind === 'habit', kl = kind === 'loop';
     document.querySelectorAll('.fg-work').forEach((el) => el.classList.toggle('hidden', !kw));
     document.querySelectorAll('.fg-plan').forEach((el) => el.classList.toggle('hidden', !kp));
     document.querySelectorAll('.fg-habit').forEach((el) => el.classList.toggle('hidden', !kh));
+    document.querySelectorAll('.fg-loop').forEach((el) => el.classList.toggle('hidden', !kl));
   }
   function closeItemModal() {
     $('#modal-backdrop').classList.add('hidden');
@@ -714,6 +796,11 @@
       if (!old && !rangeStart) base.rangeStart = today();
       if (!old && base.rank == null) base.rank = nextRank();
       next = Object.assign(base, { title, rangeStart, rangeEnd, updatedAt: new Date().toISOString() });
+    } else if (kind === 'loop') {
+      const base = old ? JSON.parse(JSON.stringify(old)) : Core.newItem({ kind: 'loop' });
+      const wds = readWeekdays($('#f-weekdays'));
+      if (!wds.length) { toast('至少选一个星期几'); return null; }
+      next = Object.assign(base, { title, weekdays: wds, updatedAt: new Date().toISOString() });
     } else if (kind === 'keep') {
       const base = old ? JSON.parse(JSON.stringify(old)) : Core.newItem({ kind: 'keep' });
       if (!old && base.rank == null) base.rank = nextRank('keep');
@@ -990,6 +1077,20 @@
       $('#p-end').value = '';
       toast('已添加，已同步到上方排序表');
     });
+    const lf = $('#loop-form');
+    if (lf) lf.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = $('#lp-title');
+      const title = (input.value || '').trim();
+      if (!title) { toast('先写一句要循环做的事'); return; }
+      const wds = readWeekdays($('#lp-weekdays'));
+      if (!wds.length) { toast('至少选一个星期几'); return; }
+      const it = Core.newItem({ kind: 'loop', title, weekdays: wds });
+      store.saveTask(it);
+      input.value = '';
+      render();
+      toast('已加入循环任务 · ' + Core.loopLabel(it));
+    });
     const kf = $('#keep-form');
     if (kf) kf.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -1088,6 +1189,11 @@
         if (item.kind === 'habit') {
           if (item.freq === 'weekly') setHabitWeekly(item, on);
           else setHabitDaily(item, on);
+        } else if (item.kind === 'loop') {
+          const r = Core.setLoopDone(item, today(), on);
+          if (r.changed) store.saveTask(r.item);
+          if (on) toast('循环任务完成 ✓ 本周不再提醒');
+          else toast('已取消，重新回到今日');
         } else {
           setWorkDone(item, on);
           if (on) toast('已完成 ✓');
@@ -1128,7 +1234,9 @@
   Core.KINDS.forEach((k) => {
     if (k.id === 'memo' || k.id === 'idea') return;   // 备忘录就地写，不走「新建」表单
     const o = document.createElement('option');
-    o.value = k.id; o.textContent = k.label + '（' + (k.id === 'work' ? '今日/明日' : k.id === 'plan' ? '方向+时间范围' : '每日/每周') + '）';
+    o.value = k.id;
+    const hint = { work: '今日/明日', loop: '每周固定某几天', plan: '方向+时间范围', habit: '每日/每周', keep: '长期清单' }[k.id];
+    o.textContent = k.label + (hint ? '（' + hint + '）' : '');
     $('#f-kind').appendChild(o);
   });
   Core.FREQS.forEach((f) => {
@@ -1138,6 +1246,13 @@
   });
 
   document.addEventListener('click', onViewClick);
+  /* 星期按钮：点一下切换高亮（值本身由 checkbox 负责） */
+  document.addEventListener('change', (e) => {
+    const input = e.target;
+    if (!input || input.type !== 'checkbox' || !input.closest('.wd-picker')) return;
+    const lab = input.closest('.wd');
+    if (lab) lab.classList.toggle('on', input.checked);
+  });
   /* 卡片底部输入框：回车/点“记下”即写入一条带时间的进展，并刷新到卡片顶部 */
   document.addEventListener('submit', (e) => {
     const form = e.target && e.target.closest ? e.target.closest('.note-inline') : null;

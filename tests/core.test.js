@@ -313,4 +313,75 @@ const D = '2026-09-08'; // 周二
   assert.deepStrictEqual(Core.keepOrdered(list), []);
 }
 
+/* 公司 · 循环任务：到日子进今日、打勾本周消失、下周一自动回来 */
+{
+  const mon = '2026-09-07', tue = D, sun = '2026-09-13';
+  const nextTue = '2026-09-15';
+  const l = Core.newItem({ kind: 'loop', title: '交周报' });
+  l.weekdays = [2];            // 每周二
+  l.created = '2026-09-01';
+  assert.deepStrictEqual(l.doneWeeks, []);
+  assert.strictEqual(Core.loopLabel(l), '每周 二');
+
+  // 周二当天才进「今日」
+  assert.strictEqual(Core.loopOn(l, tue).today, true);
+  assert.strictEqual(Core.loopOn(l, mon), null);
+  assert.strictEqual(Core.loopOn(l, sun), null);
+
+  const te = Core.todayEntries([l], [], tue);
+  assert.strictEqual(te.loops.length, 1);
+  assert.strictEqual(te.loops[0].done, false);
+  assert.strictEqual(te.total, 1);
+  assert.strictEqual(te.done, 0);
+  assert.strictEqual(Core.todayEntries([l], [], mon).total, 0);
+
+  // 打勾 = 本周完成（本周一为 key），下周一自动重置
+  const r1 = Core.setLoopDone(l, tue, true);
+  assert.strictEqual(r1.changed, true);
+  assert.deepStrictEqual(r1.item.doneWeeks, [Core.weekKey(tue)]);
+  assert.strictEqual(Core.loopState(r1.item, tue).done, true);
+  assert.strictEqual(Core.setLoopDone(r1.item, tue, true).changed, false);
+
+  const te2 = Core.todayEntries([r1.item], [], tue);
+  assert.strictEqual(te2.loops.length, 1);
+  assert.strictEqual(te2.loops[0].done, true);
+  assert.strictEqual(te2.done, 1);
+
+  // 同一周内的另一个循环日子：已勾过就本周不再出现提醒语义（done 仍为 true）
+  assert.strictEqual(Core.loopState(r1.item, '2026-09-09').done, true);
+
+  // 下一周的同一天：重新出现且未完成
+  assert.strictEqual(Core.loopOn(r1.item, nextTue).done, false);
+  const r2 = Core.setLoopDone(r1.item, nextTue, false);
+  assert.strictEqual(r2.changed, false);
+
+  // 取消打勾 → 回到未完成
+  const r3 = Core.setLoopDone(r1.item, tue, false);
+  assert.strictEqual(r3.changed, true);
+  assert.deepStrictEqual(r3.item.doneWeeks, []);
+
+  // 周日用 0 表示；周内已过的日子标记 missed
+  const sunItem = Object.assign(Core.newItem({ kind: 'loop', title: '周复盘' }), { weekdays: [0], created: '2026-09-01' });
+  assert.strictEqual(Core.loopOn(sunItem, sun).today, true);
+  assert.strictEqual(Core.loopState(sunItem, '2026-09-10').missed, false); // 周四，还没到周日
+  assert.strictEqual(Core.loopState(sunItem, '2026-09-14').missed, false); // 新的一周周一，本周日还没到
+  const monItem = Object.assign(Core.newItem({ kind: 'loop', title: '周一例会' }), { weekdays: [1], created: '2026-09-01' });
+  assert.strictEqual(Core.loopState(monItem, '2026-09-07').missed, false); // 周一当天：还没过
+  assert.strictEqual(Core.loopState(monItem, '2026-09-09').missed, true);  // 周三：本周一已过还没勾
+
+  // 创建当天之前的日期不提醒；没选星期不算
+  const fresh = Object.assign(Core.newItem({ kind: 'loop', title: '新循环' }), { weekdays: [2], created: tue });
+  assert.strictEqual(Core.loopOn(fresh, mon), null);
+  const noWd = Object.assign(Core.newItem({ kind: 'loop', title: '没选星期' }), { weekdays: [] });
+  assert.strictEqual(Core.loopState(noWd, tue), null);
+
+  // 每天都做
+  assert.strictEqual(Core.loopLabel(Object.assign(Core.newItem({ kind: 'loop' }), { weekdays: [0, 1, 2, 3, 4, 5, 6] })), '每天');
+  assert.strictEqual(Core.loopLabel(Object.assign(Core.newItem({ kind: 'loop' }), { weekdays: [1, 3, 5] })), '每周 一·三·五');
+
+  // 不跟公司/自律互相污染
+  const te3 = Core.todayEntries([sunItem, l], [], mon);
+  assert.strictEqual(te3.total, 0);
+}
+
 console.log('✅ core.test.js（V2）全部通过');

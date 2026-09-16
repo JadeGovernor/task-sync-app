@@ -334,9 +334,10 @@
     else if (st.today) chips.push({ text: '今天要做', cls: 'warn' });
     else if (st.missed) chips.push({ text: '本周已过', cls: 'dim' });
     else chips.push({ text: '本周待做', cls: 'dim' });
+    /* 循环任务同样能写进展：未完成时展开整块进展区（含底部输入框），本周已完成的收成一行 */
     return cardHTML(item, {
       check: true, done: st.done, date: d, chips, noNoteBtn: true,
-      compact: !!compact, minimal: !!compact
+      notesZone: !compact, compact: !!compact, minimal: !!compact
     });
   }
   function loopRows() {
@@ -587,7 +588,7 @@
     const loopPend = loopAll.filter((e) => !e.done);
     const loopDoneN = loopAll.length - loopPend.length;
     const loopRowToday = (e) => cardHTML(e.item, {
-      check: true, done: false, date: d, hot: true, noNoteBtn: true,
+      check: true, done: false, date: d, hot: true, notesList: true,
       chips: [{ text: '循环 · ' + Core.loopLabel(e.item), cls: 'm-loop' }, { text: '今天要做', cls: 'warn' }]
     });
     const loopHtml = loopAll.length

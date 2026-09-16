@@ -330,6 +330,12 @@
     deleteTask(id) {
       return this._mutate({ file: 'tasks', type: 'task_delete', id });
     }
+    /* 一次请求删掉多条（清理已完成用），失败照常进离线队列 */
+    deleteTasks(ids) {
+      const list = (ids || []).filter(Boolean);
+      if (!list.length) return false;
+      return this._mutate({ file: 'tasks', type: 'task_delete_many', ids: list });
+    }
     setRanks(ranks) {
       return this._mutate({ file: 'tasks', type: 'rank_set', ranks });
     }

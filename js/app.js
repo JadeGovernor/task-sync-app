@@ -58,6 +58,10 @@
   const checkins = () => store.files.checkins.value || [];
   const settingsObj = () => store.files.settings.value || { devices: {} };
   const myDevice = () => settingsObj().devices[store.deviceId] || {};
+
+  /* ---------- 清理已完成（设置页） ---------- */
+  const PURGE_KEEP_DAYS = 30;
+  const purgeIds = () => Core.purgeDoneCandidates(items(), Core.shiftDate(today(), -PURGE_KEEP_DAYS));
   const byId = (id) => items().find((t) => t.id === id);
 
   const itemOfKind = (kind) => items().filter((t) => t.kind === kind);
@@ -200,6 +204,39 @@
     return '<div class="done-sep">已完成 · ' + rows.length + ' 条 · 已移至底部</div>' +
       '<div class="done-grid">' + rows.join('') + '</div>';
   }
+
+  /* ---------- 已完成区：默认收起成一行 ----------
+   * 只改显示，不删任何数据：收起时只留「已完成 N 条」标题，
+   * 展开后先露最近 DONE_RECENT_DAYS 天完成的，更早的再折一层「更早完成」。 */
+  const DONE_RECENT_DAYS = 3;
+  const doneFoldState = {};      // 用户点过的展开状态
+  const doneFoldDefault = {};    // 没点过时的默认状态（渲染时记下来，点击时按同一套规则取反）
+  const doneFoldOpen = (scope) => (Object.prototype.hasOwnProperty.call(doneFoldState, scope)
+    ? !!doneFoldState[scope] : !!doneFoldDefault[scope]);
+  function doneSection(scope, entries) {
+    if (!entries || !entries.length) return '';
+    const open = doneFoldOpen(scope);
+    const head = '<h3 class="done-head" data-action="done-fold" data-scope="' + scope + '" role="button" tabindex="0">' +
+      '已完成 <span class="cnt">' + entries.length + ' 条</span>' +
+      '<span class="fold-caret">' + (open ? '收起 ▾' : '展开 ▸') + '</span></h3>';
+    if (!open) return '<section class="card acc-slate done-card">' + head + '</section>';
+    const list = entries.slice().sort((a, b) => ((a.date || '') < (b.date || '') ? 1 : -1));
+    const cutoff = Core.shiftDate(today(), -DONE_RECENT_DAYS);
+    const recent = list.filter((e) => !e.date || e.date >= cutoff);
+    const older = list.filter((e) => e.date && e.date < cutoff);
+    const oldScope = scope + 'Old';
+    /* 最近几天一条都没有时，直接把「更早」那层铺开，别让人白点一次 */
+    doneFoldDefault[scope] = false;
+    doneFoldDefault[oldScope] = !recent.length;
+    const openOld = doneFoldOpen(oldScope);
+    let body = recent.length ? '<div class="done-grid">' + recent.map((e) => e.html).join('') + '</div>' : '';
+    if (older.length) {
+      body += '<button class="done-more" type="button" data-action="done-fold" data-scope="' + oldScope + '">' +
+        '更早完成 · ' + older.length + ' 条 ' + (openOld ? '收起 ▾' : '展开 ▸') + '</button>';
+      if (openOld) body += '<div class="done-grid">' + older.map((e) => e.html).join('') + '</div>';
+    }
+    return '<section class="card acc-slate done-card is-open">' + head + body + '</section>';
+  }
   function cbHTML(id, done, date) {
     return '<label class="cb">' +
       '<input type="checkbox" data-action="toggle" data-id="' + id + '" data-date="' + date + '"' + (done ? ' checked' : '') + ' />' +
@@ -279,7 +316,10 @@
       else if (w.bucket === 'tomorrow') row(tmw, []);
       else if (w.bucket === 'later') row(later, [{ text: '更晚', cls: 'dim' }]);
       else if (w.bucket === 'done') {
-        done.push(cardHTML(t, { check: true, done: true, date: d, compact: true, minimal: true, chips: [{ text: t.doneDate === d ? '今日完成' : '已完成 ' + (t.doneDate || ''), cls: 'ok' }] }));
+        done.push({
+          date: t.doneDate || '',
+          html: cardHTML(t, { check: true, done: true, date: d, compact: true, minimal: true, chips: [{ text: t.doneDate === d ? '今日完成' : '已完成 ' + (t.doneDate || ''), cls: 'ok' }] })
+        });
       }
     });
     const sortDue = (a, b) => { const x = byIdOf(a), y = byIdOf(b); const dx = x.due || '', dy = y.due || ''; return dx < dy ? -1 : dx > dy ? 1 : 0; };
@@ -592,7 +632,7 @@
       '', b.today.length ? '' : 'is-quiet');
     if (b.tomorrow.length) html += section('明日 · ' + b.tomorrow.length + ' 条', b.tomorrow.join(''));
     if (b.later.length) html += section('更晚 · ' + b.later.length + ' 条', b.later.join(''), '', 'acc-slate');
-    if (b.done.length) html += section('已完成 · ' + b.done.length + ' 条', doneGrid(b.done), '', 'acc-slate');
+    if (b.done.length) html += doneSection('work', b.done);
     if (!total && !b.done.length) html += emptyBox('还没有公司条目。点右上「＋新建」添加第一条。');
     html += renderLoopSection();
     return html;
@@ -621,7 +661,10 @@
       '<span class="hint">目前 ' + g.active.length + ' 条进行中</span></div></section>';
 
     if (g.archived.length) html += section('已结束 · ' + g.archived.length + ' 条（改结束日期可恢复）', g.archived.map((e) => planCard(e, true)).join(''), '', 'acc-slate');
-    if (g.done.length) html += section('已完成 · ' + g.done.length + ' 条', doneGrid(g.done.map((e) => planCard(e, false, null, true))), '', 'acc-slate');
+    if (g.done.length) html += doneSection('plan', g.done.map((e) => ({
+      date: e.item.doneDate || '',
+      html: planCard(e, false, null, true)
+    })));
     return html;
   }
 
@@ -680,6 +723,9 @@
       '<input id="set-sleep-time" type="time" value="' + esc(sleep) + '" /></div>' +
       '<div class="actions-row"><button class="btn btn-primary" id="set-alarm-save" type="button">保存</button>' +
       '<span class="hint">音频文件名（如 morning.mp3）可在 DEPLOY.md 第 3 步配置</span></div></section>' +
+      '<section class="card"><h3>清理已完成</h3>' +
+      '<p class="hint">已完成区默认收成一行，点标题展开，不会自动删任何东西；展开后默认只露最近 ' + DONE_RECENT_DAYS + ' 天完成的。下面只在你手动点时，才删掉完成超过 ' + PURGE_KEEP_DAYS + ' 天的公司任务与计划方向，打勾历史（连续天数、自律记录）一律保留。</p>' +
+      '<div class="actions-row"><button class="btn" id="set-purge-done" type="button"' + (purgeIds().length ? '' : ' disabled') + '>清理完成超过 ' + PURGE_KEEP_DAYS + ' 天的（' + purgeIds().length + ' 条）</button></div></section>' +
       '<section class="card danger-zone"><h3>本机数据</h3>' +
       '<div class="actions-row"><button class="btn" id="set-refresh" type="button">重新拉取云端</button>' +
       '<button class="btn btn-danger" id="set-clear" type="button">清空本机缓存</button></div>' +
@@ -1156,6 +1202,16 @@
       await store.refresh(false).catch((e) => toast('刷新失败：' + e.message, 3500));
       toast('已拉取最新数据');
     });
+    const s7 = $('#set-purge-done'); if (s7) s7.addEventListener('click', async () => {
+      const ids = purgeIds();
+      if (!ids.length) { toast('没有完成超过 ' + PURGE_KEEP_DAYS + ' 天的任务'); return; }
+      const ok = await confirmDialog('清理已完成',
+        '会从云端删掉 ' + ids.length + ' 条完成超过 ' + PURGE_KEEP_DAYS + ' 天的公司任务与计划方向，这台设备和另外两端都会同步消失。打勾历史与自律记录不受影响。继续？');
+      if (!ok) return;
+      store.deleteTasks(ids);
+      toast('已清理 ' + ids.length + ' 条已完成任务');
+      render();
+    });
     const s6 = $('#set-clear'); if (s6) s6.addEventListener('click', async () => {
       const ok = await confirmDialog('清空本机缓存', '会删除本机离线数据与待同步队列（云端不受影响），Token 保留。继续？');
       if (!ok) return;
@@ -1194,6 +1250,11 @@
       const action = act.dataset.action;
       const id = act.dataset.id;
       const item = id ? byId(id) : null;
+      if (action === 'done-fold') {
+        const sc = act.dataset.scope;
+        if (sc) { doneFoldState[sc] = !doneFoldOpen(sc); render(); }
+        return;
+      }
       if (action === 'toggle' && item) {
         const input = act.tagName === 'INPUT' ? act : null;
         const on = !!input.checked;

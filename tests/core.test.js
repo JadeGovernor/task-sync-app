@@ -384,4 +384,50 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(te3.total, 0);
 }
 
+
+/* 清理已完成：只挑公司任务与计划方向里完成够久的，其余类型与打勾历史一律不碰 */
+{
+  const list = [
+    { id: 'a', kind: 'work', done: true, doneDate: '2026-07-01' },
+    { id: 'b', kind: 'work', done: true, doneDate: '2026-09-07' },
+    { id: 'c', kind: 'work', done: false, doneDate: null },
+    { id: 'd', kind: 'work', done: true },                       // 完成了没记日期 → 不猜，留着
+    { id: 'e', kind: 'plan', done: true, doneDate: '2026-06-01' },
+    { id: 'f', kind: 'habit', done: true, doneDate: '2026-06-01' },
+    { id: 'g', kind: 'loop', done: true, doneDate: '2026-06-01' },
+    { id: 'h', kind: 'keep', done: true, doneDate: '2026-06-01' },
+    { id: 'i', kind: 'memo', done: true, doneDate: '2026-06-01' }
+  ];
+  assert.deepStrictEqual(Core.purgeDoneCandidates(list, '2026-08-17'), ['a', 'e']);
+  assert.deepStrictEqual(Core.purgeDoneCandidates(list, '2026-01-01'), []);
+  assert.deepStrictEqual(Core.purgeDoneCandidates(null, '2026-08-17'), []);
+  assert.deepStrictEqual(Core.purgeDoneCandidates([list[0]], '2026-07-01'), [], '边界当天不算');
+}
+
+/* 批量删除：一次网络往返删多条；比条目本身旧的删除请求照样跳过 */
+{
+  const tasks = [
+    { id: 'a', kind: 'work', updatedAt: '2026-09-01T00:00:00.000Z' },
+    { id: 'b', kind: 'work', updatedAt: '2026-09-05T00:00:00.000Z' },
+    { id: 'c', kind: 'work', updatedAt: '2026-09-02T00:00:00.000Z' }
+  ];
+  const r1 = Core.applyOp('tasks', tasks, { type: 'task_delete_many', ids: ['a', 'c'], at: '2026-09-10T00:00:00.000Z' });
+  assert.strictEqual(r1.changed, true);
+  assert.deepStrictEqual(r1.value.map((x) => x.id), ['b']);
+
+  const r2 = Core.applyOp('tasks', tasks, { type: 'task_delete_many', ids: ['b'], at: '2026-09-04T00:00:00.000Z' });
+  assert.strictEqual(r2.changed, false, '删除比条目旧 → 保留');
+  assert.deepStrictEqual(r2.value.map((x) => x.id), ['a', 'b', 'c']);
+
+  const r3 = Core.applyOp('tasks', tasks, { type: 'task_delete_many', ids: ['zzz', 'yyy'], at: '2026-09-10T00:00:00.000Z' });
+  assert.strictEqual(r3.changed, false);
+
+  const r4 = Core.applyOp('tasks', tasks, { type: 'task_delete_many', ids: [], at: '2026-09-10T00:00:00.000Z' });
+  assert.strictEqual(r4.changed, false);
+
+  /* 空数组 / 缺字段不该炸 */
+  const r5 = Core.applyOp('tasks', undefined, { type: 'task_delete_many', at: '2026-09-10T00:00:00.000Z' });
+  assert.strictEqual(r5.changed, false);
+}
+
 console.log('✅ core.test.js（V2）全部通过');

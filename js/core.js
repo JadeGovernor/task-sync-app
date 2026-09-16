@@ -265,6 +265,19 @@
         const r = removeItem(value, op.id);
         return { value: r.list, changed: r.changed };
       }
+      /* 批量删除：一次网络往返清掉若干已完成条目（设置页的「清理已完成」用）。
+       * 逐条仍然比对时间戳，比条目本身旧的删除请求一律跳过，避免把别处刚改的内容删掉。 */
+      if (op.type === 'task_delete_many') {
+        let list = value;
+        let changed = false;
+        (op.ids || []).forEach((id) => {
+          const prev = (list || []).find((x) => x && x.id === id);
+          if (prev && op.at && (prev.updatedAt || '') > op.at) return;
+          const r = removeItem(list, id);
+          if (r.changed) { list = r.list; changed = true; }
+        });
+        return { value: list, changed };
+      }
       if (op.type === 'rank_set') {
         const map = op.ranks || {};
         let changed = false;
@@ -403,6 +416,17 @@
     return { bucket: past ? 'archived' : 'active', active, urgent, rangeEnd: end || null };
   }
 
+  /* ---------- 清理已完成 ---------- */
+  /* 只有公司任务与计划方向会被清；自律/习惯/循环任务靠自身周期重置，
+   * 备忘录没完成态，都不参与。打勾历史 checkins 一律保留，清理不影响连续打卡统计。 */
+  const PURGEABLE_KINDS = ['work', 'plan'];
+  function purgeDoneCandidates(items, beforeDate) {
+    return (items || [])
+      .filter((t) => t && PURGEABLE_KINDS.indexOf(t.kind) >= 0 &&
+        t.done && t.doneDate && t.doneDate < beforeDate)
+      .map((t) => t.id);
+  }
+
   /* ---------- 今日聚合（今日首页） ---------- */
   function todayEntries(items, checkins, date) {
     const work = [];
@@ -460,7 +484,7 @@
     KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered, memoOf, memoText,
     WEEKDAY_LABELS, WEEKDAY_SHORT, loopWeekdays, loopLabel, loopState, loopOn, setLoopDone, weekIndex,
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, setNoteDone, editNote, noteDone, upsertItem, removeItem,
-    setCheckinDate, upsertDevice, applyOp,
+    setCheckinDate, upsertDevice, applyOp, purgeDoneCandidates, PURGEABLE_KINDS,
     doneIdsFor, checkedOn, weekKey, weeklyDoneOn, dailyScheduledOn, habitOn,
     workStatus, planState, todayEntries, streakDays
   };

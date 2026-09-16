@@ -529,3 +529,20 @@ body.is-dragging, body.is-dragging * {
 }
 body.is-dragging { cursor: grabbing; }
 body.is-dragging .note-line, body.is-dragging .item-card, body.is-dragging .task { cursor: grabbing; }
+
+/* ---------- V25：已完成区默认收起 ---------- */
+.done-card { padding-top: 11px; padding-bottom: 11px; }
+.done-head {
+  display: flex; align-items: center; gap: 8px; margin: 0;
+  font-size: 13.5px; color: var(--muted); cursor: pointer;
+  -webkit-user-select: none; user-select: none;
+}
+.done-head .cnt { font-size: 11.5px; color: #94a3b8; font-weight: 500; }
+.done-head .fold-caret { margin-left: auto; font-size: 11.5px; color: var(--primary); font-weight: 600; }
+.done-card.is-open .done-head { margin-bottom: 6px; }
+.done-more {
+  display: block; width: 100%; margin-top: 8px; padding: 8px 2px 2px;
+  border: 0; border-top: 1px dashed var(--line); background: none;
+  text-align: left; font-size: 11.5px; color: #94a3b8; cursor: pointer;
+}
+.done-more:hover { color: var(--primary); }

@@ -107,13 +107,16 @@
     next.updatedAt = new Date().toISOString();
     return { item: next, changed: true };
   }
-  /* 进展按 seq 从大到小 = 最新在最上面；老数据没有 seq 时用数组下标兜底 */
+  /* 进展排序：未完成在上、已完成沉底；同一段内 seq 从大到小 = 最新在最上面。
+   * 老数据没有 seq 用数组下标兜底，没有 done 字段一律视为未完成。 */
+  const noteDone = (n) => !!(n && n.done);
   function orderedNotes(item) {
     const arr = Array.isArray(item && item.notes) ? item.notes : [];
     return arr.map((note, index) => ({
       note, index,
       seq: (note && typeof note.seq === 'number') ? note.seq : index + 1
-    })).sort((a, b) => b.seq - a.seq);
+    })).sort((a, b) =>
+      (noteDone(a.note) ? 1 : 0) - (noteDone(b.note) ? 1 : 0) || b.seq - a.seq);
   }
   function deleteNote(item, index) {
     const list = Array.isArray(item && item.notes) ? item.notes.slice() : [];
@@ -122,17 +125,42 @@
     const next = Object.assign({}, item, { notes: list, updatedAt: new Date().toISOString() });
     return { item: next, changed: true };
   }
-  /* displayOrder = 数组下标数组，第一个是页面最上面那条 */
+  /* 打勾 / 取消打勾：打勾后沉到最下面，取消后回到原来的 seq 位置 */
+  function setNoteDone(item, index, done) {
+    const list = Array.isArray(item && item.notes) ? item.notes.slice() : [];
+    if (index < 0 || index >= list.length) return { item, changed: false };
+    const now = !!list[index].done;
+    const want = !!done;
+    if (now === want) return { item, changed: false };
+    list[index] = Object.assign({}, list[index], want
+      ? { done: true, doneAt: new Date().toISOString() }
+      : { done: false, doneAt: null });
+    return { item: Object.assign({}, item, { notes: list, updatedAt: new Date().toISOString() }), changed: true };
+  }
+  /* 修改一条进展的文字：时间、顺序、打勾状态都不动 */
+  function editNote(item, index, text) {
+    const list = Array.isArray(item && item.notes) ? item.notes.slice() : [];
+    if (index < 0 || index >= list.length) return { item, changed: false };
+    const t = (text || '').trim();
+    if (!t || t === list[index].text) return { item, changed: false };
+    list[index] = Object.assign({}, list[index], { text: t, editedAt: new Date().toISOString() });
+    return { item: Object.assign({}, item, { notes: list, updatedAt: new Date().toISOString() }), changed: true };
+  }
+  /* displayOrder = 数组下标数组，第一个是页面最上面那条。
+   * 没出现在里面的（例如已完成的那些）按当前顺序接在后面。 */
   function setNoteOrder(item, displayOrder) {
     const list = Array.isArray(item && item.notes) ? item.notes.slice() : [];
-    if (displayOrder.length !== list.length) return { item, changed: false };
+    if (!list.length) return { item, changed: false };
     const seen = {};
-    const reordered = displayOrder.map((i) => {
-      if (i < 0 || i >= list.length || seen[i]) return null;
+    const reordered = [];
+    (displayOrder || []).forEach((i) => {
+      if (i < 0 || i >= list.length || seen[i]) return;
       seen[i] = true;
-      return Object.assign({}, list[i]);
+      reordered.push(Object.assign({}, list[i]));
     });
-    if (reordered.some((n) => !n)) return { item, changed: false };
+    orderedNotes(item).forEach((e) => {
+      if (!seen[e.index]) { seen[e.index] = true; reordered.push(Object.assign({}, list[e.index])); }
+    });
     const N = reordered.length;
     reordered.forEach((n, i) => { n.seq = N - i; });   // 最上面 seq 最大
     const next = Object.assign({}, item, { notes: reordered, updatedAt: new Date().toISOString() });
@@ -365,7 +393,7 @@
   const api = {
     pad, dateStr, todayStr, parseDate, shiftDate, dayDiff, weekdayCN, fmtCN, uid,
     KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered, memoOf, memoText,
-    fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, upsertItem, removeItem,
+    fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, setNoteDone, editNote, noteDone, upsertItem, removeItem,
     setCheckinDate, upsertDevice, applyOp,
     doneIdsFor, checkedOn, weekKey, weeklyDoneOn, dailyScheduledOn, habitOn,
     workStatus, planState, todayEntries, streakDays

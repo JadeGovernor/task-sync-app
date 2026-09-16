@@ -134,33 +134,51 @@
   function chip(text, cls) {
     return '<span class="chip ' + (cls || '') + '">' + esc(text) + '</span>';
   }
-  /* 进展流水：最新一条在最上面，展示时间（今天/昨天/日期 + 时刻） */
-  function noteLineHTML(item, entry, num) {
+  /* 进展流水：未完成按新→旧排在上（序号 1 在最上），打勾的划掉沉到最下面 */
+  function noteLineHTML(item, entry, num, isDone) {
     const n = entry.note;
-    return '<div class="note-line" data-id="' + item.id + '" data-note-index="' + entry.index + '">' +
-      '<span class="note-drag" title="按住拖动排序">⋮⋮</span>' +
-      '<b class="note-num">' + num + '</b>' +
+    const idx = 'data-id="' + item.id + '" data-idx="' + entry.index + '"';
+    return '<div class="note-line' + (isDone ? ' is-done' : '') + '" data-id="' + item.id + '" data-note-index="' + entry.index + '">' +
+      (isDone
+        ? '<span class="note-drag ghost">⋮⋮</span>'
+        : '<span class="note-drag" title="按住拖动排序">⋮⋮</span>') +
+      '<b class="note-num' + (isDone ? ' is-ok' : '') + '">' + (isDone ? '✓' : num) + '</b>' +
       '<i class="note-time">' + esc(Core.fmtNoteTime(n, today())) + '</i>' +
-      '<span class="note-text">' + esc(n.text) + '</span>' +
-      '<button class="note-mv" type="button" data-action="note-up" data-id="' + item.id + '" data-idx="' + entry.index + '" title="上移">▲</button>' +
-      '<button class="note-mv" type="button" data-action="note-down" data-id="' + item.id + '" data-idx="' + entry.index + '" title="下移">▼</button>' +
-      '<button class="note-del" type="button" data-action="note-del" data-id="' + item.id + '" data-idx="' + entry.index + '" title="删除这条进展">✕</button>' +
+      '<span class="note-text" title="点一下可修改">' + esc(n.text) + '</span>' +
+      '<button class="note-del" type="button" data-action="note-del" ' + idx + ' title="删除这条进展">✕</button>' +
+      '<button class="note-ok" type="button" data-action="note-done" ' + idx +
+      ' title="' + (isDone ? '取消打勾，移回上面' : '打勾：划掉并移到最后') + '">✓</button>' +
       '</div>';
   }
-  function notesBody(item) {
-    return Core.orderedNotes(item).map((e, i) => noteLineHTML(item, e, i + 1)).join('');
+  function notesSplit(item) {
+    const list = Core.orderedNotes(item);
+    return { open: list.filter((e) => !e.note.done), done: list.filter((e) => e.note.done) };
+  }
+  function notesOpenHTML(item, open) {
+    return open.map((e, i) => noteLineHTML(item, e, i + 1, false)).join('');
+  }
+  function notesDoneHTML(item, done) {
+    if (!done.length) return '';
+    return '<div class="note-done-sep">已完成 · ' + done.length + ' 条 · 已移至底部（拖不走了）</div>' +
+      '<div class="notes-done">' + done.map((e) => noteLineHTML(item, e, 0, true)).join('') + '</div>';
   }
   function notesZoneHTML(item) {
     const count = (item.notes || []).length;
     if (!count) return '<div class="notes-zone empty-notes">还没有进展，第一条写在下面 ↓</div>';
-    return '<div class="notes-zone" data-notes-for="' + item.id + '">' +
-      '<div class="notes-count">共 ' + count + ' 条进展 · 序号 1 在最上 · 可拖动排序</div>' + notesBody(item) + '</div>';
+    const sp = notesSplit(item);
+    return '<div class="notes-zone">' +
+      '<div class="notes-count">共 ' + count + ' 条进展 · 序号 1 在最上 · 整条可拖动排序 · 点文字可修改</div>' +
+      '<div class="note-list" data-notes-for="' + item.id + '">' + notesOpenHTML(item, sp.open) + '</div>' +
+      notesDoneHTML(item, sp.done) + '</div>';
   }
   function notesListHTML(item) {
     const count = (item.notes || []).length;
     if (!count) return '';
-    return '<div class="notes-zone notes-plain" data-notes-for="' + item.id + '">' +
-      '<div class="notes-count">共 ' + count + ' 条进展 · 序号 1 在最上</div>' + notesBody(item) + '</div>';
+    const sp = notesSplit(item);
+    return '<div class="notes-zone notes-plain">' +
+      '<div class="notes-count">共 ' + count + ' 条进展 · 序号 1 在最上</div>' +
+      '<div class="note-list" data-notes-for="' + item.id + '">' + notesOpenHTML(item, sp.open) + '</div>' +
+      notesDoneHTML(item, sp.done) + '</div>';
   }
   function noteInputHTML(id) {
     return '<form class="note-inline" data-id="' + id + '">' +
@@ -712,6 +730,47 @@
   }
 
   /* ---------- 记一笔 ---------- */
+  /* 点进展文字就地编辑：回车保存、Esc 取消、点别处也算保存 */
+  function startNoteEdit(textEl) {
+    if (Date.now() - SORT_LAST_DRAG < 350) return;
+    const line = textEl.closest('.note-line');
+    if (!line || document.querySelector('.note-edit')) return;
+    const item = byId(line.dataset.id);
+    const idx = Number(line.dataset.noteIndex);
+    const cur = item && (item.notes || [])[idx];
+    if (!cur) return;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'note-edit';
+    input.maxLength = 300;
+    input.value = cur.text;
+    textEl.replaceWith(input);
+    input.focus();
+    try { input.setSelectionRange(input.value.length, input.value.length); } catch (err) { /* 忽略 */ }
+    let closed = false;
+    const restore = () => {
+      const span = document.createElement('span');
+      span.className = 'note-text';
+      span.title = '点一下可修改';
+      span.textContent = cur.text;
+      if (input.parentElement) input.replaceWith(span);
+    };
+    const commit = (save) => {
+      if (closed) return;
+      closed = true;
+      const v = (input.value || '').trim();
+      if (save && v && v !== cur.text) {
+        const r = Core.editNote(item, idx, v);
+        if (r.changed) { store.saveTask(r.item); toast('进展已修改'); return; }
+      }
+      restore();
+    };
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); commit(true); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); commit(false); }
+    });
+    input.addEventListener('blur', () => commit(true));
+  }
   function openNote(item) {
     noteTargetId = item.id;
     $('#note-title').textContent = '补一条进展：' + item.title;
@@ -726,6 +785,8 @@
   /* 活跃排序容器；页面重渲染后旧节点 isConnected=false，自动淘汰 */
   const SORT_LIVE = [];
   let sortGlobalsBound = false;
+  /* 刚拖完的那一下点击不要被当成「点文字改内容」 */
+  let SORT_LAST_DRAG = 0;
   function bindSortGlobals() {
     if (sortGlobalsBound) return;
     sortGlobalsBound = true;
@@ -801,6 +862,7 @@
       if (!ph.parentElement) { el.remove(); return; } // 拖动中被重渲染：丢掉漂浮副本
       container.insertBefore(el, ph);
       ph.remove();
+      SORT_LAST_DRAG = Date.now();
       const endOrder = listItems().map(keyOf);
       if (startOrder.join('|') !== endOrder.join('|') && opts.onReorder) opts.onReorder(endOrder);
     }
@@ -894,7 +956,7 @@
 
   /* ---------- 进展拖动排序 ---------- */
   function bindNoteDrag() {
-    document.querySelectorAll('.notes-zone[data-notes-for]').forEach((zone) => {
+    document.querySelectorAll('.note-list[data-notes-for]').forEach((zone) => {
       makeSortable(zone, {
         itemSelector: '.note-line',
         ignoreSelector: 'input, textarea, select, button, a',
@@ -1013,6 +1075,8 @@
     if (tabEl) { flushMemo(); current = tabEl.dataset.tab; render(); return; }
     const go = e.target.closest('[data-tab-go]');
     if (go) { flushMemo(); current = go.dataset.tabGo; render(); return; }
+    const noteText = e.target.closest('.note-text');
+    if (noteText && !e.target.closest('[data-action]')) { startNoteEdit(noteText); return; }
     const act = e.target.closest('[data-action]');
     if (act) {
       const action = act.dataset.action;
@@ -1038,16 +1102,14 @@
         if (r.changed) { store.saveTask(r.item); toast('已删除这条进展'); }
         return;
       }
-      if ((action === 'note-up' || action === 'note-down') && item) {
+      if (action === 'note-done' && item) {
         const idx = Number(act.dataset.idx);
-        const order = Core.orderedNotes(item).map((e) => e.index);
-        const pos = order.indexOf(idx);
-        const to = action === 'note-up' ? pos - 1 : pos + 1;
-        if (pos < 0 || to < 0 || to >= order.length) return;
-        order.splice(pos, 1);
-        order.splice(to, 0, idx);
-        const r = Core.setNoteOrder(item, order);
-        if (r.changed) store.saveTask(r.item);
+        const note = (item.notes || [])[idx] || {};
+        const r = Core.setNoteDone(item, idx, !note.done);
+        if (r.changed) {
+          store.saveTask(r.item);
+          toast(note.done ? '已取消打勾，移回上面' : '已完成 ✓ 已划掉并移到最后');
+        }
         return;
       }
       if (action === 'plan-done' && item) {

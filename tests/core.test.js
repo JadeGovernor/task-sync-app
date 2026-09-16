@@ -150,6 +150,54 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(Core.deleteNote(d.item, 99).changed, false);
 }
 
+/* 进展：打勾沉底 / 取消复原 / 修改文字 */
+{
+  let it = Core.newItem({ kind: 'work', title: 'D' });
+  it = Core.addNote(it, '第一条').item;
+  it = Core.addNote(it, '第二条').item;
+  it = Core.addNote(it, '第三条').item;
+  const idxFirst = Core.orderedNotes(it).find((e) => e.note.text === '第一条').index;
+  // 打勾 → 划掉沉底
+  let r = Core.setNoteDone(it, idxFirst, true);
+  assert.strictEqual(r.changed, true);
+  it = r.item;
+  assert.deepStrictEqual(Core.orderedNotes(it).map((e) => e.note.text), ['第三条', '第二条', '第一条']);
+  assert.strictEqual(Core.orderedNotes(it).filter((e) => e.note.done).length, 1);
+  assert.ok(it.notes[idxFirst].doneAt);
+  // 重复打勾不写
+  assert.strictEqual(Core.setNoteDone(it, idxFirst, true).changed, false);
+  // 取消打勾 → 回到原来的位置（seq 位置在「第二条」之后）
+  r = Core.setNoteDone(it, idxFirst, false);
+  assert.strictEqual(r.changed, true);
+  it = r.item;
+  assert.deepStrictEqual(Core.orderedNotes(it).map((e) => e.note.text), ['第三条', '第二条', '第一条']);
+  assert.strictEqual(Core.orderedNotes(it)[2].note.done, false);
+  // 越界不写
+  assert.strictEqual(Core.setNoteDone(it, 99, true).changed, false);
+  // 修改文字：时间与 seq 不动
+  const idxSecond = Core.orderedNotes(it).find((e) => e.note.text === '第二条').index;
+  const beforeSeq = it.notes[idxSecond].seq, beforeTime = it.notes[idxSecond].time;
+  const e1 = Core.editNote(it, idxSecond, '  第二条（改过）  ');
+  assert.strictEqual(e1.changed, true);
+  assert.strictEqual(e1.item.notes[idxSecond].text, '第二条（改过）');
+  assert.strictEqual(e1.item.notes[idxSecond].seq, beforeSeq);
+  assert.strictEqual(e1.item.notes[idxSecond].time, beforeTime);
+  assert.strictEqual(Core.editNote(e1.item, idxSecond, '第二条（改过）').changed, false);
+  assert.strictEqual(Core.editNote(e1.item, idxSecond, '   ').changed, false);
+  // 拖拽只传未完成的那几条：已完成自动接在后面
+  const openIdx = Core.orderedNotes(e1.item).filter((e) => !e.note.done).map((e) => e.index);
+  const moved = openIdx.slice().reverse();
+  const o1 = Core.setNoteOrder(e1.item, moved);
+  assert.strictEqual(o1.changed, true);
+  const after = Core.orderedNotes(o1.item);
+  assert.strictEqual(after.length, 3);
+  assert.strictEqual(after.filter((e) => e.note.done).length, 0);
+  assert.deepStrictEqual(after.map((e) => e.note.text), ['第一条', '第二条（改过）', '第三条']);
+  // 部分顺序 / 越界下标都不炸
+  assert.strictEqual(Core.setNoteOrder(e1.item, []).changed, false);
+  assert.strictEqual(Core.setNoteOrder(e1.item, [99, -1]).item.notes.length, 3);
+}
+
 /* 文件操作：task_set / rank_set / 幂等 */
 {
   let list = [];

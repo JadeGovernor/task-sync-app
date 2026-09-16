@@ -180,6 +180,17 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 .note-text { flex: 1; min-width: 0; }
 .note-del { flex: none; border: 0; background: transparent; color: #cbd5e1; font-size: 12px; padding: 0 4px; line-height: 1.5; }
 .note-del:hover { color: var(--red); }
+.note-ok { flex: none; border: 0; background: transparent; color: #cbd5e1; font-size: 12px; padding: 0 4px; line-height: 1.5; }
+.note-ok:hover { color: var(--green); }
+.note-line.is-done { opacity: .55; }
+.note-line.is-done .note-text { color: #94a3b8; text-decoration: line-through; }
+.note-line.is-done .note-ok { color: var(--green); }
+.note-drag.ghost { visibility: hidden; }
+.note-num.is-ok { background: #dcfce7; color: #16a34a; }
+.note-done-sep { font-size: 11px; color: #94a3b8; padding: 8px 0 2px; margin-top: 4px; border-top: 1px dashed var(--line); }
+.notes-done .note-line { font-size: 12px; }
+.note-list:empty { display: none; }
+.note-edit { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid var(--primary); border-radius: 8px; font-size: 12px; background: #fff; }
 .note-more { font-size: 11px; color: #94a3b8; padding-top: 2px; }
 
 .plan-board-card h3 { display: flex; align-items: center; gap: 8px; }

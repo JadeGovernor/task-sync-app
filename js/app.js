@@ -891,6 +891,12 @@
     window.addEventListener('pointerup', each((i, e) => i.onUp(e)));
     window.addEventListener('pointercancel', each((i, e) => i.onUp(e)));
     window.addEventListener('touchmove', each((i, e) => i.onTouchMove(e)), { passive: false });
+    /* 文档级兜底：从选中的文字上再拖会触发浏览器原生拖拽（就是那个「复制感」），
+       而拖动中的元素此时挂在 body 下，容器级监听拦不到，所以在这里一并拦掉 */
+    document.addEventListener('dragstart', (e) => {
+      const t = e.target;
+      if (t && t.closest && t.closest('.note-line, .item-card, .task, .sort-ph')) e.preventDefault();
+    }, true);
   }
 
   function makeSortable(container, opts) {
@@ -923,6 +929,10 @@
       container.insertBefore(ph, el);
       document.body.appendChild(el);
       el.classList.add('is-sorting');
+      /* 拖动期间锁住文字选择，避免拖出「复制一块文字」的残影 */
+      const sel = window.getSelection && window.getSelection();
+      if (sel && sel.removeAllRanges) sel.removeAllRanges();
+      document.body.classList.add('is-dragging');
       el.style.width = rect.width + 'px';
       el.style.height = rect.height + 'px';
       el.style.left = rect.left + 'px';
@@ -944,6 +954,7 @@
     function finish() {
       const el = drag.el, ph = drag.ph, startOrder = drag.start;
       drag = null;
+      document.body.classList.remove('is-dragging');
       el.classList.remove('is-sorting');
       el.removeAttribute('style');
       if (!ph.parentElement) { el.remove(); return; } // 拖动中被重渲染：丢掉漂浮副本

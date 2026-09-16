@@ -505,3 +505,27 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
   .wd-picker .wd { flex: 1; }
   .wd-picker .wd span { width: 100%; height: 34px; }
 }
+
+/* ===== V24：拖拽排序不再误选文字 ===== */
+/* 可拖拽条目本身不吃文字选择，避免拖动时拖出一片蓝色选区（看起来像在复制） */
+.note-line, .item-card, .task, .sort-ph {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+/* 但里面的输入框照常可选中、可编辑 */
+.note-line input, .note-line textarea,
+.item-card input, .item-card textarea,
+.task input, .task textarea,
+.note-edit, input.note-edit {
+  -webkit-user-select: text;
+  user-select: text;
+}
+/* 拖动期间全页锁死，连卡片空白处都拖不出选区 */
+body.is-dragging, body.is-dragging * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+body.is-dragging { cursor: grabbing; }
+body.is-dragging .note-line, body.is-dragging .item-card, body.is-dragging .task { cursor: grabbing; }

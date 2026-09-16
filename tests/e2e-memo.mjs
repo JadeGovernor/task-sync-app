@@ -109,8 +109,9 @@ await wait(6500);
 ok('3b 幽灵习惯没被回灌', await ev(`!window.__mock.files()['tasks.json'].some(t=>t.id==='ghost1')&&!JSON.parse(localStorage.getItem('ts_state_v2')).tasks.some(t=>t.id==='ghost1')`));
 
 // ===== 4) 版本与离线能力 =====
-ok('4a 已切到 v20 资源', await ev(`[...document.querySelectorAll('script')].every(s=>!s.src||s.src.includes('v=20'))`));
-ok('4b Service Worker 缓存名 v20', (await (await fetch(ORIGIN+'/sw.js')).text()).includes('task-sync-v20'));
+const ver = await ev(`window.TS_CONFIG.version`);
+ok('4a 脚本资源版本号与 config 一致', await ev(`[...document.querySelectorAll('script')].every(s=>!s.src||s.src.includes('v='+window.TS_CONFIG.version))`), ver);
+ok('4b Service Worker 缓存名跟随版本', (await (await fetch(ORIGIN+'/sw.js')).text()).includes('task-sync-v'+ver), ver);
 
 ok('页面无 JS 异常', errors.length===0, errors.join(' | ').slice(0,300));
 await send('Page.removeScriptToEvaluateOnNewDocument',{identifier:inj.identifier});

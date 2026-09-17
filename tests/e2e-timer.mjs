@@ -1,4 +1,4 @@
-const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=28';
+const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=29';
 const l=await(await fetch(CDP+'/json/list')).json();
 const t=l.find(x=>x.type==='page'&&!x.url.startsWith('devtools'));
 const ws=new WebSocket(t.webSocketDebuggerUrl);let id=0;const p=new Map();
@@ -129,6 +129,33 @@ await wait(1400);
 await goTab('今日');
 const todayTxt2=await ev(`document.querySelector('#view').innerText`);
 ok('3g 过期的也照常提醒', todayTxt2.includes('牛奶过期了')&&todayTxt2.includes('已过期'), todayTxt2.slice(0,200));
+
+// ===== 3.5) 倒计时那一行的文字可以直接点开改，不用回琐事 / 创意 =====
+const rowByText = (box, t) =>
+  `(()=>{const r=[...document.querySelectorAll('${box} .timer-row')].find(x=>x.querySelector('.timer-text').textContent===${JSON.stringify(t)});if(!r)return 0;r.querySelector('.timer-text').click();return 1})()`;
+
+ok('3h 今日页也能点开这一行', (await ev(rowByText('#today-timers','买牛奶')))===1);
+ok('3i 点完变成输入框', await ev(`!!document.querySelector('#today-timers input.timer-edit')`));
+await ev(`(()=>{const i=document.querySelector('#today-timers input.timer-edit');i.value='买菜和牛奶';i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1})()`);
+await wait(500);
+const memoRemote=await ev(`(window.__mock.files()['tasks.json'].find(t=>t.kind==='memo')||{}).memo`);
+ok('3j 今日页改完落回琐事正文、标记原样保留', memoRemote==='牛奶过期了 ⏰'+dOver+'\n买菜和牛奶 ⏰'+d0+'\n交房租 ⏰'+d10, memoRemote);
+ok('3k 今日页那张卡片跟着变', (await ev(`document.querySelector('#today-timers').innerText`)).includes('买菜和牛奶'));
+
+await goTab('琐事');
+ok('3l 琐事页现在显示改后的字', (await memoVal()).includes('买菜和牛奶'));
+ok('3m 琐事页也能点开', (await ev(rowByText('#memo-timers','交房租')))===1);
+await ev(`(()=>{const i=document.querySelector('#memo-timers input.timer-edit');i.value='不该保存的内容';i.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));return 1})()`);
+await wait(400);
+ok('3n Esc 取消：一个字都没改', !(await memoVal()).includes('不该保存')&&(await memoVal()).includes('交房租 ⏰'+d10), await memoVal());
+ok('3o 取消后输入框收掉了', (await ev(`document.querySelectorAll('#memo-timers input.timer-edit').length`))===0);
+
+ok('3p 再点开一次', (await ev(rowByText('#memo-timers','交房租')))===1);
+await ev(`(()=>{const i=document.querySelector('#memo-timers input.timer-edit');i.value='交房租和水电';i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1})()`);
+await wait(500);
+ok('3q 板上和正文都改了，倒计时日期没动', (await memoVal()).includes('交房租和水电 ⏰'+d10)&&(await rowInfo()).some(x=>x.text==='交房租和水电'), await rowInfo());
+ok('3r 改完同步到远端', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes('交房租和水电')`));
+ok('3s 板上还是 3 条（改字不影响条数）', (await rows())===3, await rows());
 
 // ===== 4) 刷新（换设备/新会话）后还在 =====
 await load(URL_);await wait(1800);

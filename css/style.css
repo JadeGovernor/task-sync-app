@@ -575,6 +575,15 @@ body.is-dragging .note-line, body.is-dragging .item-card, body.is-dragging .task
 .timer-row.is-far { border-left-color: #22c55e; }
 .timer-row.is-far .timer-left { color: #15803d; }
 input.timer-date { width: auto; max-width: 150px; padding: 4px 6px; font-size: 12.5px; }
+/* 倒计时那一行的文字可以直接点开改：留出点击热区，悬停给一点反馈 */
+.timer-row .timer-text[data-action="timer-edit"] {
+  cursor: text; padding: 1px 5px; margin: -1px -5px; border-radius: 6px; transition: background .12s;
+}
+.timer-row .timer-text[data-action="timer-edit"]:hover { background: rgba(15,23,42,.06); }
+.timer-row input.timer-edit {
+  flex: 1 1 45%; min-width: 90px; width: auto; padding: 4px 8px; font-size: 13px;
+  border: 1px solid var(--primary); border-radius: 8px; background: #fff;
+}
 .timer-del {
   flex: 0 0 auto; width: 26px; height: 26px; padding: 0; line-height: 1; cursor: pointer;
   border: 1px solid var(--line); background: #fff; color: #64748b; border-radius: 8px;

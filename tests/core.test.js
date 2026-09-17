@@ -476,6 +476,15 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(Core.clearLineTimer(text, 1), text, '本来就没标记 → 原样返回');
   assert.strictEqual(Core.setLineTimer('', 0, '2026-09-25'), '⏰2026-09-25', '空备忘录也能先标一条');
   assert.strictEqual(Core.setLineTimer('只有一句', 9, '2026-09-25'), '只有一句 ⏰2026-09-25', '行号越界夹到最后一行');
+
+  /* 倒计时那一行的文字可以就地改，标记原样保留 */
+  assert.strictEqual(Core.setLineText('交房租 ⏰2026-09-25', 0, '交房租和水电'), '交房租和水电 ⏰2026-09-25');
+  assert.strictEqual(Core.setLineText('A ⏰9/20', 0, 'B'), 'B ⏰9/20', '手写的月/日写法原样保留');
+  assert.strictEqual(Core.setLineText('A ⏰2026-09-25', 0, ''), '⏰2026-09-25', '文字清空只留标记');
+  assert.strictEqual(Core.setLineText('A\nB', 1, 'C'), 'A\nC');
+  assert.strictEqual(Core.setLineText('A\nB', 9, 'C'), 'A\nC', '行号越界夹到最后一行');
+  assert.strictEqual(Core.setLineText('A\nB', 0, 'x\ny'), 'x y\nB', '换行压成空格');
+  assert.strictEqual(Core.setLineText('A', 0, '  B  '), 'B', '首尾空白去掉');
 }
 
 console.log('✅ core.test.js（V2）全部通过');

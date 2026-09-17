@@ -271,6 +271,15 @@
     lines[i] = stripTimerMarker(lines[i]).replace(/\s+$/, '');
     return lines.join('\n');
   }
+  /* 改第 n 行的正文，倒计时标记（原样，含用户手写的写法）保留 */
+  function setLineText(text, lineIndex, newText) {
+    const lines = String(text == null ? '' : text).split('\n');
+    const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
+    const body = String(newText == null ? '' : newText).replace(/[\r\n]+/g, ' ').trim();
+    const mk = parseTimerMarker(lines[i]);
+    lines[i] = mk ? (body ? body + ' ' : '') + mk.raw : body;
+    return lines.join('\n');
+  }
 
   /* ---------- 文件级合并操作（离线队列与远程合并共用） ---------- */
   function upsertItem(items, item) {
@@ -550,7 +559,7 @@
     pad, dateStr, todayStr, parseDate, shiftDate, dayDiff, weekdayCN, fmtCN, uid,
     KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered, memoOf, memoText,
     TIMER_MARK, parseTimerMarker, stripTimerMarker, timerStateOf, fmtLeft, timersOf,
-    lineIndexAt, setLineTimer, clearLineTimer,
+    lineIndexAt, setLineTimer, clearLineTimer, setLineText,
     WEEKDAY_LABELS, WEEKDAY_SHORT, loopWeekdays, loopLabel, loopState, loopOn, setLoopDone, weekIndex,
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, setNoteDone, editNote, noteDone, upsertItem, removeItem,
     setCheckinDate, upsertDevice, applyOp, purgeDoneCandidates, PURGEABLE_KINDS,

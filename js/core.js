@@ -205,6 +205,73 @@
     return m && typeof m.memo === 'string' ? m.memo : '';
   }
 
+  /* ---------- 备忘录「⏰ 倒计时」：给任意一句话标一个到期日 ----------
+   * 正文里在句末写 ⏰2026-09-20（也认 ⏰9/20、⏰9月20日），这一行就成了倒计时。
+   * 标记就写在正文里，不额外存字段 —— 少一份状态，就少一类同步冲突。 */
+  const TIMER_MARK = '⏰';
+  const TIMER_RE = /⏰\s*(?:(\d{4})\s*[-/.年]\s*)?(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*日?/;
+
+  function parseTimerMarker(line) {
+    const m = TIMER_RE.exec(String(line == null ? '' : line));
+    if (!m) return null;
+    const mo = Number(m[2]);
+    const da = Number(m[3]);
+    if (!(mo >= 1 && mo <= 12) || !(da >= 1 && da <= 31)) return null;
+    const y = m[1] ? Number(m[1]) : new Date().getFullYear();
+    return { due: y + '-' + pad(mo) + '-' + pad(da), raw: m[0] };
+  }
+  const stripTimerMarker = (line) =>
+    String(line == null ? '' : line).replace(TIMER_RE, '').replace(/\s+$/, '');
+  function timerStateOf(days) {
+    if (days < 0) return 'over';
+    if (days === 0) return 'today';
+    if (days <= 3) return 'soon';
+    return 'far';
+  }
+  /* 剩余天数文案：已过期 3 天 / 就是今天 / 明天 / 还有 5 天 */
+  function fmtLeft(days) {
+    const n = Number(days) || 0;
+    if (n < 0) return '已过期 ' + (-n) + ' 天';
+    if (n === 0) return '就是今天';
+    if (n === 1) return '明天';
+    if (n === 2) return '后天';
+    return '还有 ' + n + ' 天';
+  }
+  /* 正文里所有带 ⏰ 的行 → [{ line, text, due, days, state }]，按到期日从近到远 */
+  function timersOf(text, today) {
+    const d0 = today || todayStr();
+    return String(text == null ? '' : text).split('\n').map((line, i) => {
+      const mk = parseTimerMarker(line);
+      if (!mk) return null;
+      const days = dayDiff(d0, mk.due);
+      return { line: i, text: stripTimerMarker(line).trim(), due: mk.due, days, state: timerStateOf(days) };
+    }).filter(Boolean).sort((a, b) => {
+      if (a.due !== b.due) return a.due < b.due ? -1 : 1;
+      return a.line - b.line;
+    });
+  }
+  /* 光标位置 → 第几行（从 0 数），越界一律夹到有效范围 */
+  function lineIndexAt(text, pos) {
+    const s = String(text == null ? '' : text);
+    const p = Math.max(0, Math.min(Number(pos) || 0, s.length));
+    return s.slice(0, p).split('\n').length - 1;
+  }
+  /* 给第 n 行标到期日：已有标记就改成新日期，没有就补在句末 */
+  function setLineTimer(text, lineIndex, due) {
+    const lines = String(text == null ? '' : text).split('\n');
+    const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
+    const base = stripTimerMarker(lines[i]).replace(/\s+$/, '');
+    lines[i] = (base ? base + ' ' : '') + TIMER_MARK + due;
+    return lines.join('\n');
+  }
+  function clearLineTimer(text, lineIndex) {
+    const lines = String(text == null ? '' : text).split('\n');
+    const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
+    if (!parseTimerMarker(lines[i])) return lines.join('\n');
+    lines[i] = stripTimerMarker(lines[i]).replace(/\s+$/, '');
+    return lines.join('\n');
+  }
+
   /* ---------- 文件级合并操作（离线队列与远程合并共用） ---------- */
   function upsertItem(items, item) {
     const list = items.slice();
@@ -482,6 +549,8 @@
   const api = {
     pad, dateStr, todayStr, parseDate, shiftDate, dayDiff, weekdayCN, fmtCN, uid,
     KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered, memoOf, memoText,
+    TIMER_MARK, parseTimerMarker, stripTimerMarker, timerStateOf, fmtLeft, timersOf,
+    lineIndexAt, setLineTimer, clearLineTimer,
     WEEKDAY_LABELS, WEEKDAY_SHORT, loopWeekdays, loopLabel, loopState, loopOn, setLoopDone, weekIndex,
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, setNoteDone, editNote, noteDone, upsertItem, removeItem,
     setCheckinDate, upsertDevice, applyOp, purgeDoneCandidates, PURGEABLE_KINDS,

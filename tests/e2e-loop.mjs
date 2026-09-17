@@ -46,11 +46,18 @@ await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScal
 const inj=await send('Page.addScriptToEvaluateOnNewDocument',{source:MOCK});
 await load(URL_);await wait(1200);
 
-/* 今天 = 2026-09-16（周三）。l1 本周三要做；l2 每周一（今天不该出现） */
+/* 日期不写死：跟着真实「今天」算，哪天跑都成立
+ * D.WD   = 今天星期几（循环任务该今天做）
+ * D.other= 另一个星期几（今天不该出现）；若本周有已过去的日子就用昨天，好验「本周已过」 */
+const D=await ev(`(()=>{const WD=new Date().getDay();const t=Core.todayStr();const elapsed=(WD+6)%7;
+  const hasPast=elapsed>0;const other=hasPast?(WD+6)%7:(WD+2)%7;const alt2=(WD+2)%7;
+  return {WD,t,elapsed,hasPast,other,alt2,week:Core.weekKey(t),
+    otherShort:Core.WEEKDAY_SHORT[other],altShort:Core.WEEKDAY_SHORT[alt2],
+    minus20:Core.shiftDate(t,-20)}})()`);
 await ev(`(()=>{window.__mock.setRemote('tasks.json',[
-  {id:'l1',kind:'loop',title:'每周三写周报',weekdays:[3],doneWeeks:[],created:'2026-09-01',notes:[],updatedAt:'2026-09-01T00:00:00.000Z'},
-  {id:'l2',kind:'loop',title:'每周一开例会',weekdays:[1],doneWeeks:[],created:'2026-09-01',notes:[],updatedAt:'2026-09-01T00:00:00.000Z'},
-  {id:'w1',kind:'work',title:'跟进供应商',created:'2026-09-16',due:'2026-09-16',done:false,notes:[],updatedAt:'2026-09-16T00:00:00.000Z'}]);
+  {id:'l1',kind:'loop',title:'每周固定写周报',weekdays:[${D.WD}],doneWeeks:[],created:${JSON.stringify(D.minus20)},notes:[],updatedAt:'2026-09-01T00:00:00.000Z'},
+  {id:'l2',kind:'loop',title:'另一天开例会',weekdays:[${D.other}],doneWeeks:[],created:${JSON.stringify(D.minus20)},notes:[],updatedAt:'2026-09-01T00:00:00.000Z'},
+  {id:'w1',kind:'work',title:'跟进供应商',created:${JSON.stringify(D.t)},due:${JSON.stringify(D.t)},done:false,notes:[],updatedAt:'2026-09-01T00:00:00.000Z'}]);
   localStorage.removeItem('ts_state_v2');localStorage.removeItem('ts_revs_v2');return 1})()`);
 await load(URL_);await wait(1800);
 
@@ -61,8 +68,8 @@ const goTab=async(id)=>{for(let i=0;i<8;i++){await ev(`(()=>{const t=document.qu
 /* 1. 今日页：循环任务置顶 */
 const firstSec=await ev(`(document.querySelector('#view section h3')||{}).textContent||''`);
 ok('1a 今日第一条区块是「今日循环任务」', /今日循环任务/.test(firstSec), firstSec);
-ok('1b 周三的循环任务在今日显示', await ev(`!!document.querySelector('#view .task[data-id="l1"]')`));
-ok('1c 周一那条今天不出现', !(await ev(`!!document.querySelector('#view .task[data-id="l2"]')`)));
+ok('1b 今天该做的循环任务在今日显示', await ev(`!!document.querySelector('#view .task[data-id="l1"]')`));
+ok('1c 不是今天那条今天不出现', !(await ev(`!!document.querySelector('#view .task[data-id="l2"]')`)));
 ok('1d 标题写「1 条待做」', /1 条待做/.test(firstSec), firstSec);
 ok('1e 带「今天要做」标记', /今天要做/.test(await ev(`document.querySelector('#view .task[data-id="l1"]').textContent`)));
 ok('1f 循环任务排在今日效率卡之前',
@@ -77,7 +84,7 @@ ok('2a 打勾后从今日消失', !(await ev(`!!document.querySelector('#view .t
 ok('2b 今日显示「都做完了」', /都做完了/.test(await ev(`document.querySelector('#view').textContent`)));
 await wait(1200);
 let l1=(await ev(`window.__mock.files()['tasks.json']`)).find(x=>x.id==='l1');
-ok('2c 已写进云端 doneWeeks（本周一 2026-09-14）', l1 && (l1.doneWeeks||[]).indexOf('2026-09-14')>=0, l1&&l1.doneWeeks);
+ok('2c 已写进云端 doneWeeks（本周 ' + D.week + '）', l1 && (l1.doneWeeks||[]).indexOf(D.week)>=0, l1&&l1.doneWeeks);
 
 ok('3a 切到公司页', await goTab('work'));
 const wTxt=await ev(`(()=>{const s=[...document.querySelectorAll('#view > section')].find(x=>/循环任务/.test(x.querySelector('h3')?x.querySelector('h3').textContent:''));return s?s.textContent:''})()`);
@@ -92,22 +99,24 @@ ok('3f 标签显示「本周已完成」', doneRow && /本周已完成/.test(don
 const strike=await ev(`(()=>{const t=document.querySelector('#view .task[data-id="l1"] .task-title');return getComputedStyle(t).textDecorationLine})()`);
 ok('3g 文字真的带删除线', /line-through/.test(strike), strike);
 const l2txt=await ev(`(()=>{const t=document.querySelector('#view .task[data-id="l2"]');return t?t.textContent+'|'+(t.closest('.done-grid')?'grid':'pend'):''})()`);
-ok('3h 周一那条本周已过，仍在待办区标「本周已过」', /本周已过/.test(l2txt) && /pend/.test(l2txt), l2txt);
+if (D.hasPast) ok('3h 本周已过的那天仍在待办区标「本周已过」', /本周已过/.test(l2txt) && /pend/.test(l2txt), l2txt);
+else ok('3h 本周还没过去的那天照常在待办区', /pend/.test(l2txt) && !/is-done/.test(l2txt), l2txt);
 
-/* 4. 公司页快速添加：选周五加一条 */
-ok('4-0 快速添加默认勾中今天（周三）', await ev(`!!document.querySelector('#lp-weekdays .wd.on input[value="3"]')`));
-await ev(`(()=>{const f=document.querySelector('#loop-form');
-  f.querySelector('#lp-title').value='每周五写总结';
-  [...f.querySelectorAll('#lp-weekdays .wd')].find(l=>l.querySelector('input').value==='3').click(); // 取消今天
-  [...f.querySelectorAll('#lp-weekdays .wd')].find(l=>l.querySelector('input').value==='5').click(); // 只留周五
-  return 1})()`);
-await wait(300);
-ok('4a 点星期按钮会高亮', await ev(`!!document.querySelector('#lp-weekdays .wd.on input[value="5"]')`));
-await ev(`(()=>{const f=document.querySelector('#loop-form');f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));return 1})()`);
+/* 4. 公司页快速添加：改选另一个星期几 */
+ok('4-0 快速添加默认勾中今天（星期值 ' + D.WD + '）', await ev(`!!document.querySelector('#lp-weekdays .wd.on input[value="${D.WD}"]')`));
+/* 填标题 / 点星期 / 提交放同一次调用里：中间不等待，免得后台心跳刷新把表单重置掉 */
+const lpOn=await ev(`(()=>{const f=document.querySelector('#loop-form');
+  f.querySelector('#lp-title').value='每周${D.altShort}写总结';
+  [...f.querySelectorAll('#lp-weekdays .wd')].find(l=>l.querySelector('input').value==='${D.WD}').click(); // 取消今天
+  [...f.querySelectorAll('#lp-weekdays .wd')].find(l=>l.querySelector('input').value==='${D.alt2}').click(); // 只留那一天
+  const on=[...document.querySelectorAll('#lp-weekdays .wd.on input')].map(i=>i.value);
+  f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
+  return on})()`);
+ok('4a 点星期按钮会高亮', lpOn.length===1 && lpOn[0]===String(D.alt2), lpOn);
 await wait(1400);
-const added=(await ev(`window.__mock.files()['tasks.json']`)).find(x=>x.title==='每周五写总结');
-ok('4b 新循环任务已建并同步云端', added && added.kind==='loop' && added.weekdays.join()==='5', added);
-ok('4c 页面上出现「每周 五」的条目', /每周 五/.test(await ev(`document.querySelector('#view .task[data-id="${added&&added.id}"]').textContent`)));
+const added=(await ev(`window.__mock.files()['tasks.json']`)).find(x=>x.title==='每周'+D.altShort+'写总结');
+ok('4b 新循环任务已建并同步云端', added && added.kind==='loop' && added.weekdays.join()===String(D.alt2), added);
+ok('4c 页面上出现「每周 ' + D.altShort + '」的条目', new RegExp('每周 ' + D.altShort).test(await ev(`document.querySelector('#view .task[data-id="${added&&added.id}"]').textContent`)));
 ok('4d 输入框已清空', (await ev(`document.querySelector('#lp-title').value`))==='');
 
 /* 5. 取消打勾 → 回到未完成、重新出现 */
@@ -139,7 +148,7 @@ ok('5h 今日页循环任务带「＋进展」按钮', await goTab('today') && a
 ok('5i 今日页也看得到刚写的进展', /这周的周报先写了开头/.test(await ev(`document.querySelector('#view').textContent`)));
 await goTab('work');
 
-/* 6. 弹窗新建：类型选「循环任务」+ 周一 */
+/* 6. 弹窗新建：类型选「循环任务」+ 另一个星期几 */
 await ev(`document.querySelector('#btn-new').click()`);
 await wait(400);
 await ev(`(()=>{const k=document.querySelector('#f-kind');k.value='loop';k.dispatchEvent(new Event('change',{bubbles:true}));return 1})()`);
@@ -147,17 +156,17 @@ await wait(300);
 ok('6a 弹窗显示星期选择器', !(await ev(`document.querySelector('.fg-loop').classList.contains('hidden')`)));
 ok('6b 弹窗隐藏到日期的公司字段', await ev(`document.querySelector('.fg-work').classList.contains('hidden')`));
 ok('6c 类型下拉里有「循环任务」', /循环任务/.test(await ev(`document.querySelector('#f-kind option[value="loop"]').textContent`)));
-await ev(`(()=>{document.querySelector('#f-title').value='每周一发周计划';
-  [...document.querySelectorAll('#f-weekdays .wd')].find(l=>l.querySelector('input').value==='3').click(); // 取消默认的今天
-  [...document.querySelectorAll('#f-weekdays .wd')].find(l=>l.querySelector('input').value==='1').click();
+await ev(`(()=>{document.querySelector('#f-title').value='每周${D.altShort}发周计划';
+  [...document.querySelectorAll('#f-weekdays .wd')].find(l=>l.querySelector('input').value==='${D.WD}').click(); // 取消默认的今天
+  [...document.querySelectorAll('#f-weekdays .wd')].find(l=>l.querySelector('input').value==='${D.alt2}').click();
   document.querySelector('#task-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));return 1})()`);
 await wait(1400);
-const mAdded=(await ev(`window.__mock.files()['tasks.json']`)).find(x=>x.title==='每周一发周计划');
-ok('6d 弹窗建出的循环任务已同步', mAdded && mAdded.weekdays.join()==='1', mAdded);
+const mAdded=(await ev(`window.__mock.files()['tasks.json']`)).find(x=>x.title==='每周'+D.altShort+'发周计划');
+ok('6d 弹窗建出的循环任务已同步', mAdded && mAdded.weekdays.join()===String(D.alt2), mAdded);
 ok('6e 弹窗已关闭', await ev(`document.querySelector('#modal-backdrop').classList.contains('hidden')`));
 await ev(`document.querySelector('.tab[data-tab="today"]').click()`);
 await wait(500);
-ok('6f 周一那条不会出现在今日页', !(await ev(`!!document.querySelector('#view .task[data-id="${mAdded && mAdded.id}"]')`)));
+ok('6f 不是今天那条不会出现在今日页', !(await ev(`!!document.querySelector('#view .task[data-id="${mAdded && mAdded.id}"]')`)));
 
 /* 7. 刷新后状态保持（不会变少/回退） */
 await load(URL_);await wait(1800);

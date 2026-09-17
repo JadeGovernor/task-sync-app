@@ -430,4 +430,52 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(r5.changed, false);
 }
 
+/* 备忘录倒计时：解析 / 标日期 / 取消 / 剩余文案 */
+{
+  const text = '买牛奶 ⏰2026-09-20\n交房租\n见客户 ⏰9/8\n下月体检 ⏰2027-01-05\n这行没有倒计时';
+  const ts = Core.timersOf(text, D);   // D = 2026-09-08
+  assert.strictEqual(ts.length, 3);
+  assert.deepStrictEqual(ts.map((t) => t.due), ['2026-09-08', '2026-09-20', '2027-01-05'], '按到期日从近到远');
+  const byDue = {};
+  ts.forEach((t) => { byDue[t.due] = t; });
+  assert.strictEqual(byDue['2026-09-20'].text, '买牛奶', '标记从正文里剥掉');
+  assert.strictEqual(byDue['2026-09-20'].days, 12);
+  assert.strictEqual(byDue['2026-09-20'].state, 'far');
+  assert.strictEqual(byDue['2026-09-08'].state, 'today');
+  assert.strictEqual(byDue['2026-09-08'].line, 2, '记着它在第几行');
+
+  /* 过期 / 3 天内 / 更远 三种状态 */
+  const states = Core.timersOf('a ⏰2026-09-01\nb ⏰2026-09-10\nc ⏰2026-09-30', D).map((t) => t.state);
+  assert.deepStrictEqual(states, ['over', 'soon', 'far']);
+  assert.strictEqual(Core.fmtLeft(-3), '已过期 3 天');
+  assert.strictEqual(Core.fmtLeft(0), '就是今天');
+  assert.strictEqual(Core.fmtLeft(1), '明天');
+  assert.strictEqual(Core.fmtLeft(9), '还有 9 天');
+
+  /* 月/日写法、中文写法、带年都认；不合法日期当普通文字 */
+  assert.strictEqual(Core.parseTimerMarker('x ⏰9/20').due, new Date().getFullYear() + '-09-20');
+  assert.strictEqual(Core.parseTimerMarker('x ⏰9月20日').due, new Date().getFullYear() + '-09-20');
+  assert.strictEqual(Core.parseTimerMarker('x ⏰2026年9月20日').due, '2026-09-20');
+  assert.strictEqual(Core.parseTimerMarker('x ⏰13/40'), null);
+  assert.strictEqual(Core.parseTimerMarker('没有标记'), null);
+  assert.strictEqual(Core.timersOf('没有标记', D).length, 0);
+  assert.strictEqual(Core.timersOf('', D).length, 0);
+  assert.strictEqual(Core.timersOf(undefined, D).length, 0);
+
+  /* 光标 → 行号 */
+  assert.strictEqual(Core.lineIndexAt(text, 0), 0);
+  assert.strictEqual(Core.lineIndexAt(text, text.indexOf('交房租')), 1);
+  assert.strictEqual(Core.lineIndexAt(text, 99999), 4, '越界夹到最后一行');
+  assert.strictEqual(Core.lineIndexAt('', 0), 0);
+
+  /* 标日期：没标记补在句末；已有标记改成新日期；取消只掉标记、不动正文 */
+  assert.strictEqual(Core.setLineTimer('交房租\n买菜', 1, '2026-09-25'), '交房租\n买菜 ⏰2026-09-25');
+  assert.strictEqual(Core.setLineTimer(text, 0, '2026-10-01').split('\n')[0], '买牛奶 ⏰2026-10-01');
+  assert.strictEqual(Core.setLineTimer(text, 3, '2027-02-01').split('\n')[3], '下月体检 ⏰2027-02-01');
+  assert.strictEqual(Core.clearLineTimer(text, 0).split('\n')[0], '买牛奶');
+  assert.strictEqual(Core.clearLineTimer(text, 1), text, '本来就没标记 → 原样返回');
+  assert.strictEqual(Core.setLineTimer('', 0, '2026-09-25'), '⏰2026-09-25', '空备忘录也能先标一条');
+  assert.strictEqual(Core.setLineTimer('只有一句', 9, '2026-09-25'), '只有一句 ⏰2026-09-25', '行号越界夹到最后一行');
+}
+
 console.log('✅ core.test.js（V2）全部通过');

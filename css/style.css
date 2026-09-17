@@ -546,3 +546,44 @@ body.is-dragging .note-line, body.is-dragging .item-card, body.is-dragging .task
   text-align: left; font-size: 11.5px; color: #94a3b8; cursor: pointer;
 }
 .done-more:hover { color: var(--primary); }
+
+/* ============ V27：琐事 / 创意 的 ⏰ 倒计时 ============ */
+.timer-board { margin: 2px 0 10px; }
+.timer-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  font-size: 12.5px; font-weight: 600; color: #0f172a; margin-bottom: 6px;
+}
+.timer-head b { font-weight: 600; padding: 1px 7px; border-radius: 999px; }
+.timer-head .t-over { background: #fee2e2; color: #b91c1c; }
+.timer-head .t-soon { background: #fef3c7; color: #b45309; }
+.timer-head-hint { font-weight: 400; color: #94a3b8; }
+.timer-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 7px 10px; margin-bottom: 6px; border-radius: 10px;
+  background: #f1f5f9; border-left: 4px solid #94a3b8; font-size: 13.5px;
+}
+.timer-row .timer-left { flex: 0 0 auto; font-weight: 600; color: #475569; }
+.timer-row .timer-text { flex: 1 1 45%; min-width: 90px; color: #0f172a; overflow-wrap: anywhere; }
+.timer-row .timer-due { flex: 0 0 auto; color: #94a3b8; font-size: 12px; }
+.timer-row .timer-src { flex: 0 0 auto; color: #64748b; background: #e2e8f0; border-radius: 999px; padding: 1px 8px; font-size: 11.5px; }
+.timer-row.is-over { background: #fef2f2; border-left-color: #dc2626; }
+.timer-row.is-over .timer-left { color: #b91c1c; }
+.timer-row.is-today { background: #fff7ed; border-left-color: #f97316; }
+.timer-row.is-today .timer-left { color: #c2410c; }
+.timer-row.is-soon { background: #fffbeb; border-left-color: #f59e0b; }
+.timer-row.is-soon .timer-left { color: #b45309; }
+.timer-row.is-far { border-left-color: #22c55e; }
+.timer-row.is-far .timer-left { color: #15803d; }
+input.timer-date { width: auto; max-width: 150px; padding: 4px 6px; font-size: 12.5px; }
+.timer-del {
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0; line-height: 1; cursor: pointer;
+  border: 1px solid var(--line); background: #fff; color: #64748b; border-radius: 8px;
+}
+.timer-del:hover { color: #b91c1c; border-color: #fca5a5; background: #fef2f2; }
+.timer-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.timer-add .timer-add-label { font-size: 13px; font-weight: 600; color: #0f172a; }
+.timer-add input[type=date] { width: auto; max-width: 170px; padding: 6px 8px; font-size: 13px; }
+@media (max-width: 700px) {
+  .timer-row .timer-text { flex: 1 1 60%; }
+  input.timer-date { max-width: 100%; }
+}

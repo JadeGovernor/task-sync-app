@@ -521,7 +521,7 @@
     const st = memoState[tab];
     // 有未落盘的草稿就显示草稿：同步触发的重渲染不会把正在敲的字冲掉
     const text = st.draft != null ? st.draft : Core.memoText(items(), cfg.kind);
-    const dueDefault = Core.shiftDate(today(), 7);
+    const dueDefault = today();
     return '<section class="card memo-card memo-' + tab + '">' +
       '<h3>' + esc(cfg.title) + ' <span class="cnt" id="memo-count">' + text.length + ' 字</span></h3>' +
       '<p class="hint tight">' + esc(cfg.sub) + '</p>' +
@@ -607,14 +607,14 @@
     const hot = [];
     Object.keys(MEMOS).forEach((tab) => {
       Core.timersOf(Core.memoText(items(), MEMOS[tab].kind), d).forEach((t) => {
-        if (t.days <= 3) hot.push({ t, src: MEMOS[tab].title.replace('备忘录', '') });
+        if (t.days <= 0) hot.push({ t, src: MEMOS[tab].title.replace('备忘录', '') });
       });
     });
     if (!hot.length) return '';
     hot.sort((a, b) => (a.t.due < b.t.due ? -1 : a.t.due > b.t.due ? 1 : 0));
     const over = hot.filter((x) => x.t.state === 'over').length;
     return section('倒计时提醒 · ' + hot.length + ' 条' + (over ? ' · 已过期 ' + over : ''),
-      '<p class="hint tight">琐事 / 创意里标了倒计时、3 天内到期或已经过期的那几句。</p>' +
+      '<p class="hint tight">琐事 / 创意里标了倒计时、今天到期或已经过期的那几句；明天的要到当天才出现。</p>' +
       hot.map((x) => timerRowHTML(x.t, x.src)).join(''),
       '', over ? 'acc-red' : 'acc-amber');
   }

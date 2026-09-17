@@ -1,4 +1,4 @@
-const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=27';
+const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=28';
 const l=await(await fetch(CDP+'/json/list')).json();
 const t=l.find(x=>x.type==='page'&&!x.url.startsWith('devtools'));
 const ws=new WebSocket(t.webSocketDebuggerUrl);let id=0;const p=new Map();
@@ -105,17 +105,35 @@ ok('2b 创意里也加了倒计时', (await memoVal())==='做一个自动播演�
 ok('2c 创意板 1 条 · 显示「明天」', (await rows())===1&&(await rowInfo())[0].left==='明天', await rowInfo());
 ok('2d 两条备忘录各自独立', await ev(`(()=>{const f=window.__mock.files()['tasks.json'];const m=f.find(t=>t.kind==='memo'),i=f.find(t=>t.kind==='idea');return !!m&&!!i&&m.memo!==i.memo})()`));
 
-// ===== 3) 今日页倒计时提醒 =====
+// ===== 3) 今日页倒计时提醒：只收「今天到期 + 已过期」 =====
+const d0=await dAfter(0);
+await goTab('琐事');
+ok('3a 日期默认就是今天（不是一周后）', (await ev(`document.querySelector('#memo-timer-date').value`))===d0);
+await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.focus();ta.setSelectionRange(1,1);return 1})()`);
+await wait(200);
+await ev(`(()=>{document.querySelector('#memo-timer-date').value=${JSON.stringify(d0)};document.querySelector('#memo-timer-add').click();return 1})()`);
+await wait(400);
+ok('3b 今天到期那条落在光标行', (await memoVal()).includes('买牛奶 ⏰'+d0), await memoVal());
+
 await goTab('今日');
 const todayTxt=await ev(`document.querySelector('#view').innerText`);
-ok('3a 今日页出现倒计时提醒', todayTxt.includes('倒计时提醒'), todayTxt.slice(0,120));
-ok('3b 提醒里看得到创意的句子与来源', todayTxt.includes('做一个自动播演讲的闹钟')&&todayTxt.includes('创意'), todayTxt.slice(0,200));
-ok('3c 3 天内/过期才提醒', !todayTxt.includes('买牛奶'), '更远的倒计时不该挤进今日');
+ok('3c 今日页出现倒计时提醒', todayTxt.includes('倒计时提醒'), todayTxt.slice(0,120));
+ok('3d 今天到期的进来了、带来源标签', todayTxt.includes('买牛奶')&&todayTxt.includes('琐事'), todayTxt.slice(0,200));
+ok('3e 明天到期的不掺和进今日', !todayTxt.includes('做一个自动播演讲的闹钟'), todayTxt.slice(0,200));
+ok('3f 更远（10 天后）的也不进来', !todayTxt.includes('交房租'), todayTxt.slice(0,200));
+
+// 过期的同样要提醒
+await goTab('琐事');
+await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.value=${JSON.stringify('牛奶过期了 ⏰')}+${JSON.stringify(dOver)}+'\\n'+ta.value;ta.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);
+await wait(1400);
+await goTab('今日');
+const todayTxt2=await ev(`document.querySelector('#view').innerText`);
+ok('3g 过期的也照常提醒', todayTxt2.includes('牛奶过期了')&&todayTxt2.includes('已过期'), todayTxt2.slice(0,200));
 
 // ===== 4) 刷新（换设备/新会话）后还在 =====
 await load(URL_);await wait(1800);
 await goTab('琐事');
-ok('4a 刷新后琐事的倒计时还在', (await rows())===1&&(await memoVal()).includes('⏰'+d10), await rowInfo());
+ok('4a 刷新后琐事的倒计时还在', (await rows())===3&&(await memoVal()).includes('⏰'+d10), await rowInfo());
 await goTab('创意');
 ok('4b 刷新后创意的倒计时还在', (await rows())===1&&(await rowInfo())[0].left==='明天', await rowInfo());
 await wait(4000);

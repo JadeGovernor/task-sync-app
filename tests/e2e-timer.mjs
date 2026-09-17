@@ -1,0 +1,132 @@
+const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=27';
+const l=await(await fetch(CDP+'/json/list')).json();
+const t=l.find(x=>x.type==='page'&&!x.url.startsWith('devtools'));
+const ws=new WebSocket(t.webSocketDebuggerUrl);let id=0;const p=new Map();
+const send=(m,pa={})=>new Promise((r,j)=>{const i=++id;p.set(i,{r,j});ws.send(JSON.stringify({id:i,method:m,params:pa}))});
+await new Promise(r=>ws.addEventListener('open',r));
+ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(m.id&&p.has(m.id)){const q=p.get(m.id);p.delete(m.id);m.error?q.j(new Error(JSON.stringify(m.error))):q.r(m.result)}});
+await send('Page.enable');await send('Runtime.enable');await send('Network.enable');
+const errors=[];ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(m.method==='Runtime.exceptionThrown')errors.push(String(m.params.exceptionDetails.exception?.description||'').slice(0,200))});
+const ev=async x=>{const r=await send('Runtime.evaluate',{expression:x,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw new Error(String(r.exceptionDetails.exception?.description||r.exceptionDetails).slice(0,400));return r.result.value};
+const load=u=>new Promise(r=>{const h=e=>{const m=JSON.parse(e.data);if(m.method==='Page.loadEventFired'){ws.removeEventListener('message',h);r()}};ws.addEventListener('message',h);send('Page.navigate',{url:u})});
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const R=[];const ok=(n,c,x)=>R.push({n,pass:!!c,x});
+process.on('uncaughtException',async e=>{console.log('CRASH: '+e.message);try{await dump()}catch(_){}process.exit(1)});
+process.on('unhandledRejection',async e=>{console.log('CRASH: '+(e&&e.message||e));try{await dump()}catch(_){}process.exit(1)});
+const dump=async()=>{console.log('--- 已完成用例 ---');R.forEach(r=>console.log((r.pass?'PASS':'FAIL')+' '+r.n+(r.pass?'':'  <= '+JSON.stringify(r.x))));console.log('总计 '+R.filter(r=>r.pass).length+'/'+R.length)};
+
+const MOCK=`(()=>{
+  const KEY='__mock_remote';
+  const b64=s=>btoa(unescape(encodeURIComponent(s)));
+  const ub64=s=>decodeURIComponent(escape(atob(s)));
+  const seed=()=>({files:{'tasks.json':[],'checkins.json':[],'settings.json':{devices:{}}},sha:{},puts:0,gets:0});
+  const read=()=>{try{return JSON.parse(localStorage.getItem(KEY))||seed()}catch(e){return seed()}};
+  const save=st=>localStorage.setItem(KEY,JSON.stringify(st));
+  window.__mock={
+    files:()=>read().files, putCount:()=>read().puts, getCount:()=>read().gets,
+    setRemote:(f,v)=>{const st=read();st.files[f]=v;save(st)},
+    reset:()=>{save(seed())}
+  };
+  window.fetch=async(url,opts={})=>{
+    const f=String(url).split('/').pop().split('?')[0];
+    const m=((opts&&opts.method)||'GET').toUpperCase();
+    const st=read();
+    if(m==='GET'){st.gets++;save(st);
+      return {ok:true,status:200,headers:{get:()=>null},json:async()=>({content:b64(JSON.stringify(st.files[f]===undefined?[]:st.files[f])),sha:st.sha[f]||'s0'})};}
+    const body=JSON.parse(opts.body);
+    st.files[f]=JSON.parse(ub64(body.content));st.sha[f]='s'+(++st.puts);save(st);
+    return {ok:true,status:200,headers:{get:()=>null},json:async()=>({content:{sha:st.sha[f]}})};
+  };
+  localStorage.setItem('ts_token_v1','fake-token');
+})();`;
+
+await send('Storage.clearDataForOrigin',{origin:ORIGIN,storageTypes:'all'});
+await send('Network.setCacheDisabled',{cacheDisabled:true});
+await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScaleFactor:2,mobile:true});
+const inj=await send('Page.addScriptToEvaluateOnNewDocument',{source:MOCK});
+await load(URL_);await wait(1800);
+const goTab=async name=>{await ev(`[...document.querySelectorAll('.tab')].find(t=>t.textContent.includes(${JSON.stringify(name)})).click()`);await wait(400)};
+const dAfter=async n=>ev(`Core.shiftDate(Core.todayStr(),${n})`);
+const memoVal=()=>ev(`document.querySelector('#memo-text').value`);
+const rows=()=>ev(`document.querySelectorAll('#memo-timers .timer-row').length`);
+const rowInfo=()=>ev(`[...document.querySelectorAll('#memo-timers .timer-row')].map(r=>({cls:r.className,left:r.querySelector('.timer-left').textContent,text:r.querySelector('.timer-text').textContent,due:r.querySelector('.timer-due').textContent}))`);
+
+// ===== 1) 琐事：光标那一行 + 选日期 → 加倒计时 =====
+await goTab('琐事');
+ok('1a 琐事页有日期+按钮', await ev(`!!document.querySelector('#memo-timer-date')&&!!document.querySelector('#memo-timer-add')`));
+ok('1a2 初始没有倒计时板行', (await rows())===0);
+await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.focus();ta.value='买牛奶\\n交房租';ta.dispatchEvent(new Event('input',{bubbles:true}));
+  const pos=ta.value.indexOf('交房租')+1;ta.setSelectionRange(pos,pos);return 1})()`);
+await wait(200);
+const d3=await dAfter(3);
+await ev(`(()=>{document.querySelector('#memo-timer-date').value=${JSON.stringify(d3)};document.querySelector('#memo-timer-add').click();return 1})()`);
+await wait(400);
+const text1=await memoVal();
+ok('1b 标记落在光标那一行（第 2 行）', text1==='买牛奶\n交房租 ⏰'+d3, JSON.stringify(text1));
+ok('1c 倒计时板出现这条', (await rows())===1, await rows());
+const r1=(await rowInfo())[0]||{};
+ok('1d 显示剩余天数 + 3天内状态', r1.left==='还有 3 天'&&r1.cls.includes('is-soon'), r1);
+ok('1e 已同步到远端', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes(${JSON.stringify('交房租 ⏰'+d3)})`));
+ok('1f 待上传队列已清空', (await ev(`JSON.parse(localStorage.getItem('ts_outbox_v2')||'[]').length`))===0);
+
+// 板上改日期 → 正文跟着改
+const d10=await dAfter(10);
+await ev(`(()=>{const i=document.querySelector('#memo-timers [data-action="timer-date"]');i.value=${JSON.stringify(d10)};i.dispatchEvent(new Event('change',{bubbles:true}));return 1})()`);
+await wait(400);
+ok('1g 板上改日期改的是正文', (await memoVal())==='买牛奶\n交房租 ⏰'+d10, await memoVal());
+const r2=(await rowInfo())[0]||{};
+ok('1h 剩余天数跟着变', r2.left==='还有 10 天'&&r2.cls.includes('is-far'), r2);
+ok('1i 改完也同步出去了', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes(${JSON.stringify('交房租 ⏰'+d10)})`));
+
+// 手写标记：直接敲进正文也认
+const dOver=await dAfter(-4);
+await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.value='买牛奶 ⏰'+${JSON.stringify(dOver)}+'\\n交房租 ⏰'+${JSON.stringify(d10)};ta.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);
+await wait(1400);
+ok('1j 手写标记被自动识别', (await rows())===2, await rows());
+const rs=(await rowInfo());
+ok('1k 过期那条排最前且标红', rs[0].cls.includes('is-over')&&rs[0].left==='已过期 4 天', rs[0]);
+ok('1l 倒计时头显示统计', await ev(`document.querySelector('#memo-timers .timer-head').textContent.includes('已过期 1')&&document.querySelector('#memo-timers .timer-head').textContent.includes('倒计时 · 2 条')`));
+
+// ✕ 去掉一条
+await ev(`(()=>{document.querySelectorAll('#memo-timers [data-action="timer-del"]')[0].click();return 1})()`);
+await wait(500);
+ok('1m 删掉后正文里标记也没了', !(await memoVal()).includes('⏰'+dOver), await memoVal());
+ok('1n 板上只剩一条', (await rows())===1, await rows());
+
+// ===== 2) 创意：同款能力，且和琐事互不干扰 =====
+await goTab('创意');
+ok('2a 创意页也有倒计时工具条', await ev(`!!document.querySelector('#memo-timer-add')`));
+const d1=await dAfter(1);
+await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.focus();ta.value='做一个自动播演讲的闹钟';ta.setSelectionRange(3,3);ta.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);
+await wait(200);
+await ev(`(()=>{document.querySelector('#memo-timer-date').value=${JSON.stringify(d1)};document.querySelector('#memo-timer-add').click();return 1})()`);
+await wait(400);
+ok('2b 创意里也加了倒计时', (await memoVal())==='做一个自动播演讲的闹钟 ⏰'+d1, await memoVal());
+ok('2c 创意板 1 条 · 显示「明天」', (await rows())===1&&(await rowInfo())[0].left==='明天', await rowInfo());
+ok('2d 两条备忘录各自独立', await ev(`(()=>{const f=window.__mock.files()['tasks.json'];const m=f.find(t=>t.kind==='memo'),i=f.find(t=>t.kind==='idea');return !!m&&!!i&&m.memo!==i.memo})()`));
+
+// ===== 3) 今日页倒计时提醒 =====
+await goTab('今日');
+const todayTxt=await ev(`document.querySelector('#view').innerText`);
+ok('3a 今日页出现倒计时提醒', todayTxt.includes('倒计时提醒'), todayTxt.slice(0,120));
+ok('3b 提醒里看得到创意的句子与来源', todayTxt.includes('做一个自动播演讲的闹钟')&&todayTxt.includes('创意'), todayTxt.slice(0,200));
+ok('3c 3 天内/过期才提醒', !todayTxt.includes('买牛奶'), '更远的倒计时不该挤进今日');
+
+// ===== 4) 刷新（换设备/新会话）后还在 =====
+await load(URL_);await wait(1800);
+await goTab('琐事');
+ok('4a 刷新后琐事的倒计时还在', (await rows())===1&&(await memoVal()).includes('⏰'+d10), await rowInfo());
+await goTab('创意');
+ok('4b 刷新后创意的倒计时还在', (await rows())===1&&(await rowInfo())[0].left==='明天', await rowInfo());
+await wait(4000);
+ok('4c 心跳几轮没被冲掉', (await rows())===1);
+
+// ===== 5) 版本与离线 =====
+const ver=await ev(`window.TS_CONFIG.version`);
+ok('5a 脚本资源版本号与 config 一致', await ev(`[...document.querySelectorAll('script')].every(s=>!s.src||s.src.includes('v='+window.TS_CONFIG.version))`), ver);
+ok('5b Service Worker 缓存名跟随版本', (await (await fetch(ORIGIN+'/sw.js')).text()).includes('task-sync-v'+ver), ver);
+
+ok('页面无 JS 异常', errors.length===0, errors.join(' | ').slice(0,300));
+await send('Page.removeScriptToEvaluateOnNewDocument',{identifier:inj.identifier});
+await dump();
+process.exit(R.every(r=>r.pass)?0:1);

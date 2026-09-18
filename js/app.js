@@ -1037,6 +1037,8 @@
       label + (badge ? '<i>' + b + '</i>' : '') + (extra || '') + '</button>';
   }
   function render() {
+    if (sortActive > 0) { pendingRender = true; return; }   // 拖动中重建 DOM 会把手上那张卡片变成孤儿
+    pendingRender = false;
     if (anyMemoFlushing()) return;               // 备忘录正在落盘，别把输入框重建掉
     if (MEMOS[current]) {
       const st = memoState[current];
@@ -1217,6 +1219,16 @@
   let sortGlobalsBound = false;
   /* 刚拖完的那一下点击不要被当成「点文字改内容」 */
   let SORT_LAST_DRAG = 0;
+  /* 正在拖动的排序实例数。拖动期间一律不重建 DOM：
+   * 否则容器被换掉，手上这张浮起来的卡片就成了孤儿，is-dragging 锁也留在页面上，
+   * 看起来就是「页面卡住了，拖不动也没反应」。等拖完再补一次渲染。 */
+  let sortActive = 0;
+  let pendingRender = false;
+  function flushPendingRender() {
+    if (sortActive > 0 || !pendingRender) return;
+    pendingRender = false;
+    try { render(); } catch (e) { /* 忽略 */ }
+  }
   function bindSortGlobals() {
     if (sortGlobalsBound) return;
     sortGlobalsBound = true;
@@ -1229,6 +1241,15 @@
         }
       };
     }
+    /* 兜底：鼠标在窗口外松开、切后台、按 Esc、或 event 对不上实例时，
+       pointerup 可能永远收不到。这时页面会一直留着浮起来的卡片 + is-dragging 锁（就是「卡住」）。
+       任何可疑信号都来清一次，清不到东西也不会有副作用。 */
+    window.addEventListener('blur', () => abortAllDrags());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) abortAllDrags(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') abortAllDrags(); });
+    window.addEventListener('pointerup', () => setTimeout(abortAllDrags, 0));       // 正常收尾之后兜底
+    window.addEventListener('pointercancel', () => setTimeout(abortAllDrags, 0));
+    window.addEventListener('touchend', () => setTimeout(abortAllDrags, 0));
     /* 挂在 window 上：指针在容器外松开也能正常收尾 */
     window.addEventListener('pointermove', each((i, e) => i.onMove(e)), { passive: false });
     window.addEventListener('pointerup', each((i, e) => i.onUp(e)));
@@ -1240,6 +1261,21 @@
       const t = e.target;
       if (t && t.closest && t.closest('.note-line, .item-card, .task, .sort-ph, .timer-item')) e.preventDefault();
     }, true);
+  }
+
+  /* 把所有残留的拖动状态清干净（浮起的卡片、占位符、body 上的锁） */
+  function abortAllDrags() {
+    let any = false;
+    for (let i = SORT_LIVE.length - 1; i >= 0; i -= 1) {
+      const inst = SORT_LIVE[i];
+      if (!inst.container.isConnected) { SORT_LIVE.splice(i, 1); continue; }
+      if (inst.hasDrag && inst.hasDrag()) { inst.cancel(); any = true; }
+    }
+    /* 实例已经丢了也不怕：按残骸特征直接扫 */
+    document.querySelectorAll('.sort-ph').forEach((p) => p.remove());
+    document.querySelectorAll('body > .is-sorting').forEach((el) => el.remove());
+    document.body.classList.remove('is-dragging');
+    if (any) flushPendingRender();
   }
 
   function makeSortable(container, opts) {
@@ -1281,6 +1317,10 @@
       el.style.left = rect.left + 'px';
       el.style.top = rect.top + 'px';
       drag = { el, ph, offsetY: e.clientY - rect.top, pointerId: e.pointerId, start: listItems().map(keyOf) };
+      sortActive += 1;
+      /* 指针捕获挂在容器上（卡片已被移到 body，捕获会被丢掉）：
+       * 这样指针跑到窗口外再松开，pointerup 也还能收到。 */
+      try { if (container.setPointerCapture) container.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
     }
 
     function place(pointerY) {
@@ -1294,19 +1334,37 @@
       else container.appendChild(drag.ph);
     }
 
-    function finish() {
-      const el = drag.el, ph = drag.ph, startOrder = drag.start;
+    /* keepOrder=false 时直接丢弃这次拖动（容器已被换掉、Esc 取消、窗口失焦…） */
+    function endDrag(keepOrder) {
+      const d = drag;
+      if (!d) return;
       drag = null;
+      if (sortActive > 0) sortActive -= 1;
+      try {
+        if (container.hasPointerCapture && container.hasPointerCapture(d.pointerId)) container.releasePointerCapture(d.pointerId);
+      } catch (err) { /* 忽略 */ }
       document.body.classList.remove('is-dragging');
-      el.classList.remove('is-sorting');
-      el.removeAttribute('style');
-      if (!ph.parentElement) { el.remove(); return; } // 拖动中被重渲染：丢掉漂浮副本
-      container.insertBefore(el, ph);
-      ph.remove();
-      SORT_LAST_DRAG = Date.now();
-      const endOrder = listItems().map(keyOf);
-      if (startOrder.join('|') !== endOrder.join('|') && opts.onReorder) opts.onReorder(endOrder);
+      d.el.classList.remove('is-sorting');
+      d.el.removeAttribute('style');
+      /* 占位符还在、且容器本身还挂在页面上，才算这次拖动有效 */
+      const alive = !!d.ph.parentElement && container.isConnected;
+      if (keepOrder && alive) {
+        container.insertBefore(d.el, d.ph);
+        d.ph.remove();
+        SORT_LAST_DRAG = Date.now();
+      } else {
+        d.el.remove();                  // 丢掉漂浮副本，别留在页面上
+        d.ph.remove();
+        /* 取消 = 按数据重建一遍：卡片本身被拿走又没放回去，得靠重渲染让它回到原位 */
+        if (typeof d.el.isConnected === 'boolean') pendingRender = true;
+      }
+      /* 先读顺序（占位符已换成真身），再补渲染，免得渲染把节点换掉后读不到 */
+      const endOrder = (keepOrder && alive) ? listItems().map(keyOf) : null;
+      if (endOrder && d.start.join('|') !== endOrder.join('|') && opts.onReorder) opts.onReorder(endOrder);
+      flushPendingRender();
     }
+    function finish() { endDrag(true); }
+    function cancel() { endDrag(false); }
 
     function onDown(e) {
       if (drag) return;
@@ -1328,6 +1386,8 @@
     }
 
     function onMove(e) {
+      /* 鼠标在窗口外松开过：下一次 move 时 buttons 已经是 0，直接收尾，别一直卡着 */
+      if (drag && e.pointerType === 'mouse' && e.buttons === 0) { finish(); return; }
       if (down && !drag && e.pointerId === down.pointerId) {
         if (Math.abs(e.clientY - down.y) < 6 && Math.abs(e.clientX - down.x) < 6) return;
         clearTimeout(timer);
@@ -1352,7 +1412,7 @@
     for (let i = SORT_LIVE.length - 1; i >= 0; i -= 1) {
       if (SORT_LIVE[i].container === container) SORT_LIVE.splice(i, 1); // 同一容器不重复绑定
     }
-    SORT_LIVE.push({ container, onMove, onUp, onTouchMove });
+    SORT_LIVE.push({ container, onMove, onUp, onTouchMove, cancel, hasDrag: () => !!drag });
 
     container.addEventListener('pointerdown', onDown);
     container.addEventListener('dragstart', (e) => e.preventDefault()); // 关掉浏览器原生拖拽

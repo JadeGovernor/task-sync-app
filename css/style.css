@@ -309,7 +309,7 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 
 /* 拖动中的元素：脱离文档流跟随指针 */
 .is-sorting {
-  position: fixed; z-index: 60; margin: 0 !important; pointer-events: none;
+  position: fixed; z-index: 80; margin: 0 !important; pointer-events: none;
   border-radius: 12px; background: #fff; overflow: hidden;
   box-shadow: 0 14px 34px rgba(2,6,23,.24); transform: scale(1.015); opacity: .97;
 }

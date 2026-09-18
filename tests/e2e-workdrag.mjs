@@ -150,5 +150,41 @@ ok('6e 恢复把那一版整份推回了云端', restored.indexOf('wt2')>=0 && r
 await goTab('work');
 ok('6f 恢复后公司页条目回来了', String(await ev(board())).indexOf('today:wt2')>=0, await ev(board()));
 ok('6g 全程无 JS 报错（含恢复流程）', errors.length===0, errors.slice(0,2));
+/* --- 7) 手机（iPhone 尺寸）触屏长按拖动 --- */
+await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScaleFactor:2,mobile:true});
+await send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});
+await goTab('work');await wait(600);
+const overflow=await ev(`(()=>{const b=document.querySelector('#work-board');if(!b)return 'NO_BOARD';
+  return document.documentElement.scrollWidth<=Math.ceil(window.innerWidth)+2?'OK':('OVERFLOW '+document.documentElement.scrollWidth+' > '+window.innerWidth)})()`);
+ok('7a 手机宽度下公司页不横向溢出', overflow==='OK', overflow);
+const beforeMobile=String(await ev(board()));
+const ids=beforeMobile.split(',').filter(x=>x.startsWith('today:'));
+ok('7b 今日桶里至少两条可拖', ids.length>=2, beforeMobile);
+await ev('window.__mids=' + JSON.stringify(ids));
+await ev(`(()=>{const el=document.querySelector('#work-board .item-card');if(el)el.scrollIntoView({block:'center'});return 1})()`);
+await wait(600);
+const gm=await ev(`(()=>{const ids=window.__mids.map(x=>x.split(':')[1]);
+  const a=document.querySelector('#work-board .item-card[data-id="'+ids[0]+'"] .task-title').getBoundingClientRect();
+  const b=document.querySelector('#work-board .wb-head[data-bucket="tomorrow"]').getBoundingClientRect();
+  return {fx:a.left+a.width/2,fy:a.top+a.height/2,tx:b.left+80,ty:b.top-8}})()`);
+const g7=gm&&gm.fx!=null?gm:null;
+if(g7){
+  const pt=(x,y)=>[{x,y,radiusX:2,radiusY:2,force:1,id:1}];
+  await ev(`window.__pt=[];['pointerdown','pointermove','pointerup','pointercancel','touchstart','touchmove','touchend','touchcancel'].forEach(t=>document.addEventListener(t,e=>window.__pt.push(t+':'+(e.pointerType||'')),true))`);
+  await send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:pt(g7.fx,g7.fy)});
+  await wait(450);
+  let midTouch=false;
+  for(let i=1;i<=8;i++){await send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:pt(g7.fx,g7.fy+(g7.ty-g7.fy)*i/8)});
+    if(i===4)midTouch=await ev(`document.body.classList.contains('is-dragging')`);await wait(30)}
+  await send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  await wait(1500);
+  ok('7c 触屏长按能进拖动', midTouch===true, midTouch);
+  const afterMobile=String(await ev(board()));
+  ok('7d 触屏拖动真的改了顺序', afterMobile!==beforeMobile, beforeMobile+' -> '+afterMobile);
+} else {
+  ok('7c 触屏长按能进拖动', false, '拿不到卡片坐标');
+  ok('7d 触屏拖动真的改了顺序', false, '拿不到卡片坐标');
+}
+ok('7e 移动端全程无 JS 报错', errors.length===0, errors.slice(0,2));
 await dump();
 process.exit(R.every(r=>r.pass)?0:1);

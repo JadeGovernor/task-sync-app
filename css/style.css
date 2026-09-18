@@ -574,6 +574,12 @@ body.is-dragging .note-line, body.is-dragging .item-card, body.is-dragging .task
 .timer-row.is-soon .timer-left { color: #b45309; }
 .timer-row.is-far { border-left-color: #22c55e; }
 .timer-row.is-far .timer-left { color: #15803d; }
+/* 打过勾的：划掉、变淡、沉到最下面 */
+.timer-row.is-done { background: #f8fafc; border-left-color: #cbd5e1; }
+.timer-row.is-done .timer-text { text-decoration: line-through; color: #94a3b8; }
+.timer-row.is-done .timer-left, .timer-row.is-done .timer-due { color: #94a3b8; }
+.timer-row .timer-cb { width: 22px; height: 22px; margin-right: 2px; }
+.timer-head .t-done { background: #dcfce7; color: #15803d; }
 input.timer-date { width: auto; max-width: 150px; padding: 4px 6px; font-size: 12.5px; }
 /* 倒计时那一行的文字可以直接点开改：留出点击热区，悬停给一点反馈 */
 .timer-row .timer-text[data-action="timer-edit"] {

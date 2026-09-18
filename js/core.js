@@ -210,6 +210,12 @@
    * 标记就写在正文里，不额外存字段 —— 少一份状态，就少一类同步冲突。 */
   const TIMER_MARK = '⏰';
   const TIMER_RE = /⏰\s*(?:(\d{4})\s*[-/.年]\s*)?(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*日?/;
+  /* 这一行做完了没有：正文行首写 ✅ 就算完成（同样写在正文里，不额外存字段）。
+     ✅ 和 ⏰ 可以并存：'✅ 买菜 ⏰2026-09-20' = 今天到期那件事已经打勾。 */
+  const DONE_MARK = '✅';
+  const DONE_RE = /^\s*✅\s*/;
+  const hasDoneMark = (line) => DONE_RE.test(String(line == null ? '' : line));
+  const stripDoneMark = (line) => String(line == null ? '' : line).replace(DONE_RE, '');
 
   function parseTimerMarker(line) {
     const m = TIMER_RE.exec(String(line == null ? '' : line));
@@ -244,8 +250,12 @@
       const mk = parseTimerMarker(line);
       if (!mk) return null;
       const days = dayDiff(d0, mk.due);
-      return { line: i, text: stripTimerMarker(line).trim(), due: mk.due, days, state: timerStateOf(days) };
+      return {
+        line: i, text: stripDoneMark(stripTimerMarker(line)).trim(), due: mk.due,
+        days, done: hasDoneMark(line), state: timerStateOf(days)
+      };
     }).filter(Boolean).sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;   // 打过勾的沉到最下面
       if (a.due !== b.due) return a.due < b.due ? -1 : 1;
       return a.line - b.line;
     });
@@ -268,16 +278,28 @@
     const lines = String(text == null ? '' : text).split('\n');
     const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
     if (!parseTimerMarker(lines[i])) return lines.join('\n');
-    lines[i] = stripTimerMarker(lines[i]).replace(/\s+$/, '');
+    lines[i] = stripDoneMark(stripTimerMarker(lines[i])).replace(/\s+$/, '');
     return lines.join('\n');
   }
-  /* 改第 n 行的正文，倒计时标记（原样，含用户手写的写法）保留 */
+  /* 改第 n 行的正文：打勾的 ✅ 和倒计时标记（原样，含用户手写的写法）都保留 */
   function setLineText(text, lineIndex, newText) {
     const lines = String(text == null ? '' : text).split('\n');
     const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
-    const body = String(newText == null ? '' : newText).replace(/[\r\n]+/g, ' ').trim();
+    const body = stripDoneMark(String(newText == null ? '' : newText)).replace(/[\r\n]+/g, ' ').trim();
     const mk = parseTimerMarker(lines[i]);
-    lines[i] = mk ? (body ? body + ' ' : '') + mk.raw : body;
+    const parts = [];
+    if (hasDoneMark(lines[i])) parts.push(DONE_MARK);
+    if (body) parts.push(body);
+    if (mk) parts.push(mk.raw);
+    lines[i] = parts.join(' ');
+    return lines.join('\n');
+  }
+  /* 打勾 / 取消打勾：在那一行行首加 / 去 ✅，日期标记一个字都不动 */
+  function setLineDone(text, lineIndex, done) {
+    const lines = String(text == null ? '' : text).split('\n');
+    const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
+    const body = stripDoneMark(lines[i]).replace(/^\s+/, '');
+    lines[i] = done ? (body ? DONE_MARK + ' ' + body : DONE_MARK) : body;
     return lines.join('\n');
   }
 
@@ -559,6 +581,7 @@
     pad, dateStr, todayStr, parseDate, shiftDate, dayDiff, weekdayCN, fmtCN, uid,
     KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered, memoOf, memoText,
     TIMER_MARK, parseTimerMarker, stripTimerMarker, timerStateOf, fmtLeft, timersOf,
+    DONE_MARK, hasDoneMark, stripDoneMark, setLineDone,
     lineIndexAt, setLineTimer, clearLineTimer, setLineText,
     WEEKDAY_LABELS, WEEKDAY_SHORT, loopWeekdays, loopLabel, loopState, loopOn, setLoopDone, weekIndex,
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, setNoteDone, editNote, noteDone, upsertItem, removeItem,

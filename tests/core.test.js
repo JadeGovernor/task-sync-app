@@ -485,6 +485,29 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(Core.setLineText('A\nB', 9, 'C'), 'A\nC', '行号越界夹到最后一行');
   assert.strictEqual(Core.setLineText('A\nB', 0, 'x\ny'), 'x y\nB', '换行压成空格');
   assert.strictEqual(Core.setLineText('A', 0, '  B  '), 'B', '首尾空白去掉');
+
+  /* 打勾：✅ 写在行首，倒计时标记一个字不动 */
+  assert.strictEqual(Core.hasDoneMark('✅ 买牛奶 ⏰2026-09-25'), true);
+  assert.strictEqual(Core.hasDoneMark('买牛奶'), false);
+  assert.strictEqual(Core.stripDoneMark('✅ 买牛奶'), '买牛奶');
+  assert.strictEqual(Core.setLineDone('买牛奶 ⏰2026-09-25', 0, true), '✅ 买牛奶 ⏰2026-09-25');
+  assert.strictEqual(Core.setLineDone('✅ 买牛奶 ⏰2026-09-25', 0, false), '买牛奶 ⏰2026-09-25');
+  assert.strictEqual(Core.setLineDone('✅ 买牛奶', 0, true), '✅ 买牛奶', '重复打勾不会叠两个 ✅');
+  assert.strictEqual(Core.setLineDone('✅ ⏰2026-09-25', 0, true), '✅ ⏰2026-09-25', '空正文只留标记');
+  assert.strictEqual(Core.setLineDone('A\nB ⏰2026-09-25', 9, true), 'A\n✅ B ⏰2026-09-25', '行号越界夹到最后一行');
+  assert.strictEqual(Core.setLineDone('买牛奶', 1, false), '买牛奶', '取消打勾对没标记的行不动');
+
+  /* timersOf 带上打勾状态：文字剥掉 ✅，打过勾的排到最后 */
+  const dt = Core.timersOf('✅ 买牛奶 ⏰2026-09-08\n交房租 ⏰2026-09-01\n✅ 见客户 ⏰2026-09-20', D);
+  assert.deepStrictEqual(dt.map((t) => t.done), [false, true, true], '打过勾的沉到最后');
+  assert.deepStrictEqual(dt.map((t) => t.text), ['交房租', '买牛奶', '见客户'], '✅ 从展示文字里剥掉');
+  assert.deepStrictEqual(dt.map((t) => t.line), [1, 0, 2], '行号仍是正文里的真实行号');
+
+  /* 打过勾那一行改文字 / 改日期 / 取消倒计时：✅ 该留的留、该掉的掉 */
+  assert.strictEqual(Core.setLineText('✅ 买牛奶 ⏰9/20', 0, '买菜'), '✅ 买菜 ⏰9/20', '改文字保留 ✅');
+  assert.strictEqual(Core.setLineText('✅ 买牛奶 ⏰9/20', 0, '✅ 买菜'), '✅ 买菜 ⏰9/20', '手滑把 ✅ 打进去也不会叠');
+  assert.strictEqual(Core.setLineTimer('✅ 买牛奶 ⏰9/20', 0, '2026-10-01'), '✅ 买牛奶 ⏰2026-10-01', '改日期保留 ✅');
+  assert.strictEqual(Core.clearLineTimer('✅ 买牛奶 ⏰9/20', 0), '买牛奶', '取消倒计时时 ✅ 一起清掉');
 }
 
 console.log('✅ core.test.js（V2）全部通过');

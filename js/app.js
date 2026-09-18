@@ -66,7 +66,12 @@
   const byId = (id) => items().find((t) => t.id === id);
 
   const itemOfKind = (kind) => items().filter((t) => t.kind === kind);
-  const workUndone = () => itemOfKind('work').filter((t) => !t.done && (!t.due || t.due >= today()));
+  /* tab 上的「公司」数字 = 今天该做的条数（含逾期顺延），跟公司页「今日」桶、今日页「公司 · 今日到期」完全一个口径。
+   * 以前用的是「未完成且到期日 >= 今天」，把逾期顺延的条目漏掉了，所以会出现「页面上 5 条、tab 上 1 条」。 */
+  const workToday = () => {
+    const d = today();
+    return itemOfKind('work').filter((t) => !t.done && Core.workStatus(t, d).bucket === 'today').length;
+  };
   const activePlans = () => itemOfKind('plan').filter((t) => Core.planState(t, today()).active);
   const habitsAction = () => {
     const d = today();
@@ -262,9 +267,9 @@
     }
     return '<section class="card acc-slate done-card is-open">' + head + body + '</section>';
   }
-  function cbHTML(id, done, date) {
+  function cbHTML(id, done, date, action) {
     return '<label class="cb">' +
-      '<input type="checkbox" data-action="toggle" data-id="' + id + '" data-date="' + date + '"' + (done ? ' checked' : '') + ' />' +
+      '<input type="checkbox" data-action="' + (action || 'toggle') + '" data-id="' + id + '" data-date="' + date + '"' + (done ? ' checked' : '') + ' />' +
       '<span class="box"></span></label>';
   }
   function cardHTML(item, opts) {
@@ -274,7 +279,7 @@
         '<div class="task-title">' + esc(item.title) + '</div>' +
         '<div class="task-meta">' + (o.chips || []).map((c) => chip(c.text, c.cls)).join('') + '</div>' +
       '</div>';
-    const cb = o.check ? cbHTML(item.id, o.done, o.date) : '';
+    const cb = o.check ? cbHTML(item.id, o.done, o.date, o.checkAction) : '';
     const badge = o.badge != null
       ? '<span class="row-badge' + (o.badgeCls ? ' ' + o.badgeCls : '') + '">' + esc(String(o.badge)) + '</span>'
       : '';
@@ -816,7 +821,8 @@
       const chips = [{ text: '计划', cls: 'm-plan' }];
       if (t.rangeStart || t.rangeEnd) chips.push({ text: (t.rangeStart || '?') + ' → ' + (t.rangeEnd || '持续'), cls: 'dim' });
       if (e.st.urgent) chips.push({ text: '紧急 · 剩 ' + Math.max(0, Core.dayDiff(d, t.rangeEnd)) + ' 天', cls: 'warn' });
-      return cardHTML(t, { check: false, chips, notesList: true, hot: e.st.urgent });
+      /* 可以直接打勾：勾上等于「完成归档」，和计划页的「完成」按钮同一套逻辑（可恢复） */
+      return cardHTML(t, { check: true, checkAction: 'plan-done', done: false, date: d, chips, notesList: true, hot: e.st.urgent });
     };
     const planHtml = planTop.map(planRowToday).join('') +
       (plans.length > planTop.length
@@ -1060,7 +1066,7 @@
     const todayBadge = te.total - te.done;
     const labels = [
       ['today', '今日', todayBadge || 0],
-      ['work', '公司', workUndone().length],
+      ['work', '公司', workToday()],
       ['plan', '计划', activePlans().length],
       ['disc', '自律', habitsAction()],
       ['keep', '习惯', itemOfKind('keep').length],

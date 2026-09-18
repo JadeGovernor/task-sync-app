@@ -153,6 +153,11 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
   position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
   background: #0f172a; color: #fff; padding: 9px 16px; border-radius: 999px;
   font-size: 13px; box-shadow: 0 8px 24px rgba(2,6,23,.35); z-index: 99; max-width: 90vw;
+  display: flex; align-items: center; gap: 10px; text-align: left;
+}
+.toast-undo {
+  border: 0; background: none; padding: 0; font: inherit; font-weight: 700;
+  color: #7dd3fc; cursor: pointer; flex: none; text-decoration: underline;
 }
 
 @media (min-width: 760px) {

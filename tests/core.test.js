@@ -555,6 +555,15 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(Core.reorderLineBlocks(t7, [4]), t7, '只有一个块就不动');
   assert.strictEqual(Core.reorderLineBlocks(t7, [0, 2, 99]), t7, '行号越界的块直接忽略');
   assert.strictEqual(Core.reorderLineBlocks('', [0, 1]), '', '空正文不炸');
+
+  /* 打勾 = 整块划掉：句子连它下面的进展一起删 */
+  assert.strictEqual(Core.deleteLineBlock(t2, 0), '交房租 ⏰2026-09-25', '删句子时把它挂的进展一起删');
+  assert.strictEqual(Core.deleteLineBlock(t2, 3),
+    '买菜和牛奶 ⏰2026-09-20\n  ↳ 09-18 已经买了牛奶\n  ↳ 09-18 牛奶换成低脂的', '删最后一行不碰前面的进展');
+  assert.strictEqual(Core.deleteLineBlock('  ↳ 09-18 a\n买菜', 0), '买菜', '单删一条进展也只删它自己');
+  assert.strictEqual(Core.deleteLineBlock('只有一行', 0), '', '删光就是空正文');
+  assert.strictEqual(Core.deleteLineBlock('A\nB\nC', 9), 'A\nB', '行号越界夹到最后一行');
+  assert.strictEqual(Core.deleteLineBlock('', 0), '', '空正文不炸');
 }
 
 console.log('✅ core.test.js（V2）全部通过');

@@ -1,4 +1,4 @@
-const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=31';
+const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=32';
 const l=await(await fetch(CDP+'/json/list')).json();
 const t=l.find(x=>x.type==='page'&&!x.url.startsWith('devtools'));
 const ws=new WebSocket(t.webSocketDebuggerUrl);let id=0;const p=new Map();
@@ -171,45 +171,56 @@ ok('3q 板上和正文都改了，倒计时日期没动', (await memoVal()).incl
 ok('3r 改完同步到远端', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes('交房租和水电')`));
 ok('3s 板上还是 3 条（改字不影响条数）', (await rows())===3, await rows());
 
-// ===== 3.6) 打勾：琐事 / 创意 板上勾，今日页里也能直接勾 =====
+// ===== 3.6) 打勾 = 这件事划掉：整行（连它的进展）从琐事 / 创意里删掉，误点可撤回 =====
 const todayRowsInfo=()=>ev(`[...document.querySelectorAll('#today-timers .timer-row')].map(r=>({cls:r.className,text:r.querySelector('.timer-text').textContent,checked:!!r.querySelector('.timer-cb input').checked}))`);
 const memoSaved=()=>ev(`((window.__mock.files()['tasks.json']||[]).find(t=>t.kind==='memo')||{}).memo`);
 const tickCb=(box,t)=>`(()=>{const r=[...document.querySelectorAll('${box} .timer-row')].find(x=>x.querySelector('.timer-text').textContent===${JSON.stringify(t)});if(!r)return 0;r.querySelector('.timer-cb input').click();return 1})()`;
+const toastText=()=>ev(`document.querySelector('#toast').textContent`);
+const clickUndo=()=>ev(`(()=>{const b=document.querySelector('#toast [data-action="undo"]');if(!b)return 0;b.click();return 1})()`);
 
 ok('3.6a 琐事板上每条都有打勾框', (await ev(`document.querySelectorAll('#memo-timers .timer-row .timer-cb input').length`))===3);
 ok('3.6b 板上勾掉那条过期的', (await ev(tickCb('#memo-timers','牛奶过期了')))===1);
-await wait(600);
-ok('3.6c 正文行首写了 ✅、倒计时标记原样保留', (await memoVal()).split('\n')[0]==='✅ 牛奶过期了 ⏰'+dOver, await memoVal());
-const bi=await rowInfo();
-ok('3.6d 勾掉的那条划掉并沉到最下面', bi[bi.length-1].text==='牛奶过期了'&&bi[bi.length-1].cls.includes('is-done'), JSON.stringify(bi));
-ok('3.6e 板子头部显示「已打勾 1」', (await ev(`document.querySelector('#memo-timers .timer-head').innerText`)).includes('已打勾 1'));
-ok('3.6f 勾完同步到远端', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes('✅ 牛奶过期了')`));
+await wait(700);
+ok('3.6c 打勾不再留 ✅，那一行整块从正文删掉', !(await memoVal()).includes('牛奶过期了')&&!(await memoVal()).includes('✅'), await memoVal());
+ok('3.6d 板上跟着少一条', (await rows())===2, await rows());
+ok('3.6e 删除同步到远端', !(await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes('牛奶过期了')`)));
+const hasUndo=await ev(`!!document.querySelector('#toast [data-action="undo"]')`);
+ok('3.6f 提示条上带「撤回」按钮', hasUndo&&(await toastText()).includes('划掉'), await toastText());
+ok('3.6g 点撤回', (await clickUndo())===1);
+await wait(700);
+ok('3.6h 撤回后那一行原样回来', (await memoVal()).includes('牛奶过期了 ⏰'+dOver)&&(await rows())===3, await memoVal());
+ok('3.6i 撤回也同步到远端', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes('牛奶过期了')`));
+
+/* 今日页勾掉一条：连它下面的进展一起删，不用再回琐事 */
+await goTab('琐事');
+await ev(`(()=>{const i=[...document.querySelectorAll('#memo-timers .timer-item')].find(x=>x.querySelector('.timer-text').textContent==='买菜和牛奶');i.querySelector('[data-action="sub-add"]').click();return 1})()`);
+await wait(250);
+await ev(`(()=>{const f=document.querySelector('#memo-timers .timer-sub-add-form');f.querySelector('input').value='已经买好了';f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));return 1})()`);
+await wait(800);
+ok('3.6j 先给这条挂上一条进展', (await memoVal()).includes('↳ '+d0.slice(5)+' 已经买好了'), await memoVal());
 
 await goTab('今日');
 const ti1=await todayRowsInfo();
-ok('3.6g 今日页两条都在、勾过的那条显示为已勾', ti1.length===2&&ti1[0].text==='买菜和牛奶'&&!ti1[0].checked&&ti1[1].text==='牛奶过期了'&&ti1[1].checked&&ti1[1].cls.includes('is-done'), JSON.stringify(ti1));
-ok('3.6h 今日页每行都有打勾框', (await ev(`document.querySelectorAll('#today-timers .timer-row .timer-cb input').length`))===2);
-ok('3.6i 今日页直接勾掉一条', (await ev(tickCb('#today-timers','买菜和牛奶')))===1);
-await wait(600);
-ok('3.6i2 勾选后还留在今日页（没被当成切页指令跳到琐事）', await ev(`!!document.querySelector('#today-timers')&&!document.querySelector('#memo-text')`));
-ok('3.6j 今日页勾完写回琐事正文', (await memoSaved()).includes('✅ 买菜和牛奶 ⏰'+d0), await memoSaved());
-const ti2=await todayRowsInfo();
-ok('3.6k 今日页勾完那行划掉、沉到最下面', ti2[1].text==='买菜和牛奶'&&ti2[1].checked&&ti2[1].cls.includes('is-done'), JSON.stringify(ti2));
-ok('3.6l 今日页标题跟着报已打勾', (await ev(`document.querySelector('#today-timers').closest('.card').innerText`)).includes('已打勾'), '');
-
-ok('3.6m 今日页再点一下取消打勾', (await ev(tickCb('#today-timers','牛奶过期了')))===1);
-await wait(600);
-const ti3=await todayRowsInfo();
-ok('3.6n 取消后回到未勾状态、正文里的 ✅ 也没了', !ti3.find(r=>r.text==='牛奶过期了').checked&&!(await memoSaved()).includes('✅ 牛奶过期了'), JSON.stringify(ti3)+' | '+await memoSaved());
-
+ok('3.6k 今日页两条都在、都还没勾', ti1.length===2&&ti1.every(r=>!r.checked), JSON.stringify(ti1));
+ok('3.6l 今日页直接勾掉一条', (await ev(tickCb('#today-timers','买菜和牛奶')))===1);
+await wait(700);
+ok('3.6m 勾掉的这条从今日页消失，只剩另一条', (await todayRowsInfo()).length===1, JSON.stringify(await todayRowsInfo()));
+ok('3.6n 勾选后没被当成切页指令跳到琐事', await ev(`!!document.querySelector('#today-timers')&&!document.querySelector('#memo-text')`));
+const saved=await memoSaved();
+ok('3.6o 琐事正文里那句和它的进展一起删了', !saved.includes('买菜和牛奶')&&!saved.includes('已经买好了'), saved);
+ok('3.6p 别的那条一个字没动', saved.includes('交房租和水电 ⏰'+d10), saved);
+ok('3.6q 删除也同步到远端', !(await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes('已经买好了')`)));
+ok('3.6r 今日页也能撤回这一整块', (await clickUndo())===1);
+await wait(700);
+ok('3.6s 撤回后今日页两条又都在', (await todayRowsInfo()).length===2, JSON.stringify(await todayRowsInfo()));
 await goTab('琐事');
-ok('3.6o 琐事板上取消另一条', (await ev(tickCb('#memo-timers','买菜和牛奶')))===1);
-await wait(600);
-ok('3.6p 取消后正文一个 ✅ 都不剩', !(await memoVal()).includes('✅'), await memoVal());
-ok('3.6q 取消也同步到远端', !(await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes('✅')`)));
+ok('3.6t 撤回后那句和它的进展都回来了', (await memoVal()).includes('买菜和牛奶 ⏰'+d0)&&(await memoVal()).includes('↳ '+d0.slice(5)+' 已经买好了'), await memoVal());
+
+/* 收尾：删掉刚加的进展，正文恢复到 3.5 结束时的三行 */
+await ev(`(()=>{const s=document.querySelector('#memo-timers .timer-sub');s.querySelector('[data-action="sub-del"]').click();return 1})()`);
+await wait(700);
+ok('3.6u 现场恢复成三行、没有 ✅', (await memoVal()).split('\n').length===3&&!(await memoVal()).includes('✅'), await memoVal());
 await goTab('今日');
-ok('3.6r 今日页也回到全景（两条都没勾）', (await todayRowsInfo()).every(r=>!r.checked));
-await goTab('琐事');
 
 // ===== 3.7) 今日页里直接补进展 / 删倒计时 / 拖动排序（不用回琐事 / 创意） =====
 const findItem = (box,t)=>`[...document.querySelectorAll('${box} .timer-item')].find(x=>x.querySelector('.timer-text').textContent===${JSON.stringify(t)})`;

@@ -78,12 +78,36 @@
 
   /* ---------- 提示 ---------- */
   let toastTimer = null;
+  let undoFn = null;                 // 最近一次删除的「撤回」动作；过期就作废
   function toast(msg, ms) {
     const t = $('#toast');
+    undoFn = null;
     t.textContent = msg;
     t.classList.remove('hidden');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.add('hidden'), ms || 2600);
+  }
+  /* 删除类操作给一条后悔路：提示条上带个「撤回」按钮 */
+  function toastUndo(msg, undo, ms) {
+    const t = $('#toast');
+    t.textContent = msg;
+    undoFn = undo;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'toast-undo';
+    b.setAttribute('data-action', 'undo');
+    b.textContent = '撤回';
+    b.addEventListener('click', () => {
+      const fn = undoFn;
+      undoFn = null;
+      t.classList.add('hidden');
+      clearTimeout(toastTimer);
+      if (fn) fn();
+    });
+    t.appendChild(b);
+    t.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { undoFn = null; t.classList.add('hidden'); }, ms || 6000);
   }
   function confirmDialog(title, text) {
     return new Promise((resolve) => {
@@ -564,15 +588,29 @@
     });
     inp.addEventListener('blur', () => settle(true));
   }
-  /* 勾 / 取消勾：改动照样写回那一行所属的备忘录正文（✅ 标在行首） */
+  /* 打勾 = 这件事做完了：整行（连它下面的进展）从琐事 / 创意里删掉，不留 ✅ 堆积。
+     删错了就点提示条上的「撤回」把原来那一块放回去。 */
   function toggleTimerDone(row, fallbackTab, on) {
     if (!row) return;
     const tab = row.getAttribute('data-src-tab') || fallbackTab;
     if (!MEMOS[tab]) return;
     const line = Number(row.getAttribute('data-line'));
-    applyMemoText(tab, Core.setLineDone(memoTextNow(tab), line, !!on));
+    const before = memoTextNow(tab);
+    if (!on) {                                   // 手写的 ✅ 想取消：只把 ✅ 去掉，行留着
+      applyMemoText(tab, Core.setLineDone(before, line, false));
+      refreshAfterTimerEdit(tab);
+      toast('已取消打勾');
+      return;
+    }
+    const after = Core.deleteLineBlock(before, line);
+    applyMemoText(tab, after);
     refreshAfterTimerEdit(tab);
-    toast(on ? '打勾了 · 已划掉沉到底部' : '已取消打勾');
+    toastUndo('打勾了 · 这件事已划掉', () => {
+      if (memoTextNow(tab) !== after) { toast('这行刚改过，就不撤回了'); return; }
+      applyMemoText(tab, before);
+      refreshAfterTimerEdit(tab);
+      toast('已撤回');
+    });
   }
   /* 用一段新正文替换备忘录：走和手打一样的落盘路径，只重画倒计时板，不重建输入框 */
   function applyMemoText(tab, text) {
@@ -698,7 +736,8 @@
     return hot;
   }
   const TODAY_TIMER_HINT = '琐事 / 创意里标了倒计时、今天到期或已经过期的那几句。' +
-    '方框打勾 · 点字改内容 · 改日期 · ＋进展补记 · ✕ 去掉倒计时 —— 改的都是琐事 / 创意里那一行，不用再回去改；' +
+    '方框打勾 = 这件事做完了，整行（连它的进展）直接从琐事 / 创意里划掉，误点可在提示条上「撤回」；' +
+    '点字改内容 · 改日期 · ＋进展补记 · ✕ 只去掉倒计时（正文那句话留着）—— 改的都是琐事 / 创意里那一行，不用再回去改；' +
     '整条可拖动排序（只在同一张备忘录里生效）。';
   function todayTimersBodyHTML() {
     const hot = todayTimerRows();

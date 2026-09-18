@@ -363,6 +363,18 @@
     lines.splice(i, 1);
     return lines.join('\n');
   }
+  /* 整块划掉：删掉第 n 行，连同它下面挂着的进展行一起 —— 倒计时那件事打完勾就走这条路 */
+  function deleteLineBlock(text, lineIndex) {
+    const lines = String(text == null ? '' : text).split('\n');
+    const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
+    if (!lines.length) return '';
+    let end = i + 1;
+    if (!isSubLine(lines[i])) {
+      while (end < lines.length && isSubLine(lines[end])) end += 1;
+    }
+    lines.splice(i, end - i);
+    return lines.join('\n');
+  }
   /* 拖动排序：按新顺序把「句子 + 它的进展行」整块搬一遍，别的行原地不动 */
   function reorderLineBlocks(text, order) {
     const lines = String(text == null ? '' : text).split('\n');
@@ -666,7 +678,7 @@
     KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered, memoOf, memoText,
     TIMER_MARK, parseTimerMarker, stripTimerMarker, timerStateOf, fmtLeft, timersOf,
     DONE_MARK, hasDoneMark, stripDoneMark, setLineDone,
-    SUB_MARK, isSubLine, parseSubLine, subLinesOf, addSubLine, setSubLineText, deleteSubLine, reorderLineBlocks,
+    SUB_MARK, isSubLine, parseSubLine, subLinesOf, addSubLine, setSubLineText, deleteSubLine, deleteLineBlock, reorderLineBlocks,
     lineIndexAt, setLineTimer, clearLineTimer, setLineText,
     WEEKDAY_LABELS, WEEKDAY_SHORT, loopWeekdays, loopLabel, loopState, loopOn, setLoopDone, weekIndex,
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, setNoteDone, editNote, noteDone, upsertItem, removeItem,

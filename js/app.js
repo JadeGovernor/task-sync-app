@@ -61,6 +61,7 @@
 
   /* ---------- 清理已完成（设置页） ---------- */
   const PURGE_KEEP_DAYS = 30;
+  const HIST_MAX = 20;            // 设置页「数据恢复」保留的快照份数（与 store.js 一致）
   const purgeIds = () => Core.purgeDoneCandidates(items(), Core.shiftDate(today(), -PURGE_KEEP_DAYS));
   const byId = (id) => items().find((t) => t.id === id);
 
@@ -326,29 +327,40 @@
   const todayWeekday = () => new Date().getDay();
 
   /* ---------- 公司 ---------- */
+  /* 公司页：先按到期日分桶，桶内用 rank 排（拖动写进去的），没排过的按到期日 */
   function workRows() {
     const d = today();
-    const tod = [], tmw = [], later = [], done = [];
+    const buckets = { today: [], tomorrow: [], later: [], done: [] };
     itemOfKind('work').forEach((t) => {
       const w = Core.workStatus(t, d);
-      const row = (list, chips) => {
-        const c = (w.overdue ? [{ text: '逾期', cls: 'warn' }] : []).concat(chips);
-        if (t.due) c.push({ text: w.bucket === 'later' || w.bucket === 'tomorrow' ? t.due : (w.overdue ? '原定 ' + t.due : '今天'), cls: 'dim' });
-        list.push(cardHTML(t, { check: true, done: false, date: d, hot: !!w.overdue, chips: c, notesZone: true }));
-      };
-      if (w.bucket === 'today') row(tod, []);
-      else if (w.bucket === 'tomorrow') row(tmw, []);
-      else if (w.bucket === 'later') row(later, [{ text: '更晚', cls: 'dim' }]);
-      else if (w.bucket === 'done') {
-        done.push({
-          date: t.doneDate || '',
-          html: cardHTML(t, { check: true, done: true, date: d, compact: true, minimal: true, chips: [{ text: t.doneDate === d ? '今日完成' : '已完成 ' + (t.doneDate || ''), cls: 'ok' }] })
-        });
-      }
+      (buckets[w.bucket] || buckets.later).push({ t, w });
     });
-    const sortDue = (a, b) => { const x = byIdOf(a), y = byIdOf(b); const dx = x.due || '', dy = y.due || ''; return dx < dy ? -1 : dx > dy ? 1 : 0; };
-    function byIdOf(html) { return html.match(/data-id="([^"]+)"/)[1]; }
-    return { today: tod.sort(sortDue), tomorrow: tmw.sort(sortDue), later: later.sort(sortDue), done };
+    const rankOf = (x) => (typeof x.t.rank === 'number' ? x.t.rank : 9e9);
+    const dueOf = (x) => x.t.due || '';
+    ['today', 'tomorrow', 'later'].forEach((k) => {
+      buckets[k].sort((a, b) => (rankOf(a) - rankOf(b)) ||
+        (dueOf(a) < dueOf(b) ? -1 : dueOf(a) > dueOf(b) ? 1 : 0) ||
+        (a.t.created < b.t.created ? -1 : 1));
+    });
+    buckets.done.sort((a, b) => ((a.t.doneDate || '') < (b.t.doneDate || '') ? 1 : -1));
+    return { today: buckets.today, tomorrow: buckets.tomorrow, later: buckets.later, done: buckets.done, d };
+  }
+  function workCardHTML(x, d) {
+    const t = x.t, w = x.w;
+    const chips = [];
+    if (w.overdue) chips.push({ text: '逾期顺延', cls: 'warn' });
+    if (t.due) chips.push({ text: w.bucket === 'later' ? t.due : (w.bucket === 'tomorrow' ? '明天 ' + t.due : (w.overdue ? '原定 ' + t.due : '今天')), cls: 'dim' });
+    return cardHTML(t, { check: true, done: false, date: d, hot: !!w.overdue, chips, notesZone: true });
+  }
+  function workDoneRow(x, d) {
+    const t = x.t;
+    return {
+      date: t.doneDate || '',
+      html: cardHTML(t, {
+        check: true, done: true, date: d, compact: true, minimal: true,
+        chips: [{ text: t.doneDate === d ? '今日完成' : '已完成 ' + (t.doneDate || ''), cls: 'ok' }]
+      })
+    };
   }
 
   /* ---------- 公司：循环任务（每周固定某几天） ---------- */
@@ -454,7 +466,7 @@
   /* 新记下的一条：滚到屏幕中间并闪一下，避免「记了却看不见」 */
   function revealItem(id) {
     requestAnimationFrame(() => {
-      const el = document.querySelector('#keep-board .task[data-id="' + id + '"]');
+      const el = document.querySelector('#view [data-id="' + id + '"]');
       if (!el) return;
       el.scrollIntoView({ block: 'center', behavior: 'smooth' });
       el.classList.add('just-added');
@@ -849,20 +861,29 @@
   /* ---------- 公司页 ---------- */
   function renderWork() {
     const b = workRows();
+    const d = b.d;
     const total = b.today.length + b.tomorrow.length + b.later.length;
     let html = section('公司 · 总览',
       '<div class="summary">' + statPill('今日', b.today.length, 's-blue') +
       statPill('明日', b.tomorrow.length) +
       statPill('更晚', b.later.length) +
       statPill('已完成', b.done.length, 's-green') + '</div>' +
-      '<p class="hint tight">今日 / 明日 / 更晚按到期日自动分桶，逾期会自动顺延到今天。</p>', '', 'acc-blue');
+      '<p class="hint tight">按到期日自动分桶，逾期会自动顺延到今天。今日 / 明日 / 更晚 都能在下面直接拖动改顺序。</p>', '', 'acc-blue');
 
-    html += section('今日 · ' + b.today.length + ' 条' + (b.today.some((h) => h.indexOf('is-hot') >= 0) ? ' · 含逾期顺延' : ''),
-      b.today.join('') || emptyLine('今日无事。', 'today', '回今日'),
-      '', b.today.length ? '' : 'is-quiet');
-    if (b.tomorrow.length) html += section('明日 · ' + b.tomorrow.length + ' 条', b.tomorrow.join(''));
-    if (b.later.length) html += section('更晚 · ' + b.later.length + ' 条', b.later.join(''), '', 'acc-slate');
-    if (b.done.length) html += doneSection('work', b.done);
+    const head = (key, label, note) => '<h4 class="wb-head" data-bucket="' + key + '">' + label +
+      '<span class="cnt">' + b[key].length + '</span>' + (note ? '<span class="wb-note">' + note + '</span>' : '') + '</h4>';
+    const cards = (key) => b[key].map((x) => workCardHTML(x, d)).join('');
+    const overdue = b.today.filter((x) => x.w.overdue).length;
+    const board = total
+      ? head('today', '今日', overdue ? '含逾期顺延 ' + overdue : '') + cards('today') +
+        head('tomorrow', '明日', '') + cards('tomorrow') +
+        head('later', '更晚', '') + cards('later')
+      : emptyBox('没有待办。点右上「＋新建」加一条。');
+    html += '<section class="card work-board-card"><h3>待办 · 整条任意位置可拖动 ' +
+      '<span class="cnt">' + total + ' 条</span></h3>' +
+      '<p class="hint tight">拖动改顺序（顺序会存到云端，三端一致）；把一条拖进别的桶，到期日会跟着改：拖进「明日」＝改到明天，拖进「更晚」＝改到一周后。</p>' +
+      '<div class="plan-board work-board" id="work-board">' + board + '</div></section>';
+    if (b.done.length) html += doneSection('work', b.done.map((x) => workDoneRow(x, d)));
     if (!total && !b.done.length) html += emptyBox('还没有公司条目。点右上「＋新建」添加第一条。');
     html += renderLoopSection();
     return html;
@@ -956,11 +977,57 @@
       '<section class="card"><h3>清理已完成</h3>' +
       '<p class="hint">已完成区默认收成一行，点标题展开，不会自动删任何东西；展开后默认只露最近 ' + DONE_RECENT_DAYS + ' 天完成的。下面只在你手动点时，才删掉完成超过 ' + PURGE_KEEP_DAYS + ' 天的公司任务与计划方向，打勾历史（连续天数、自律记录）一律保留。</p>' +
       '<div class="actions-row"><button class="btn" id="set-purge-done" type="button"' + (purgeIds().length ? '' : ' disabled') + '>清理完成超过 ' + PURGE_KEEP_DAYS + ' 天的（' + purgeIds().length + ' 条）</button></div></section>' +
+      '<section class="card"><h3>数据恢复 · 本机历史快照</h3>' +
+      '<p class="hint">每次被云端新数据覆盖之前，本机都会把上一版存一份（每个文件最多 ' + HIST_MAX + ' 份）。万一某次同步把内容变少或误删了，点「恢复」就能把那一版整份推回云端，三端一起回到那个版本。</p>' +
+      historyHTML() +
+      '</section>' +
       '<section class="card danger-zone"><h3>本机数据</h3>' +
       '<div class="actions-row"><button class="btn" id="set-refresh" type="button">重新拉取云端</button>' +
       '<button class="btn btn-danger" id="set-clear" type="button">清空本机缓存</button></div>' +
       '<p class="hint">设备 ID：' + esc(store.deviceId) + '</p></section>'
     );
+  }
+
+  /* ---------- 设置页：历史快照列表 ---------- */
+  const HIST_LABEL = { tasks: '待办', checkins: '打勾', settings: '设置' };
+  function histCount(file, v) {
+    if (file === 'tasks') return (v || []).length + ' 条';
+    if (file === 'checkins') return Object.keys(v || {}).length + ' 天';
+    return Object.keys((v && v.devices) || {}).length + ' 台设备';
+  }
+  function histStamp(at) {
+    const d = new Date(at);
+    if (isNaN(d.getTime())) return at || '';
+    const p2 = (n) => (n < 10 ? '0' + n : String(n));
+    return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  }
+  function historyHTML() {
+    let out = '';
+    ['tasks', 'checkins', 'settings'].forEach((f) => {
+      const list = store.history(f).slice(0, 6);
+      if (!list.length) return;
+      out += '<div class="hist-group"><div class="hist-title">' + esc(HIST_LABEL[f]) + '</div>' +
+        list.map((h) => '<div class="hist-row"><span class="hist-at">' + esc(histStamp(h.at)) + '</span>' +
+          '<span class="hist-n">' + esc(histCount(f, h.value)) + '</span>' +
+          '<button class="mini-btn" type="button" data-restore="' + f + ':' + h.index + '">恢复</button></div>').join('') +
+        '</div>';
+    });
+    return out || '<p class="hint tight">还没有历史快照（同步过一两次之后就会出现）。</p>';
+  }
+  async function restoreSnapshot(spec) {
+    const parts = String(spec).split(':');
+    const file = parts[0], idx = Number(parts[1]);
+    const h = store.history(file)[idx];
+    if (!h) return toast('这份快照读不出来了');
+    const ok = await confirmDialog('恢复数据',
+      '把「' + (HIST_LABEL[file] || file) + '」回退到 ' + histStamp(h.at) + ' 的版本（' + histCount(file, h.value) + '）？\n会整份推回云端，另一台设备和 iPhone 也会跟着回到这个版本。');
+    if (!ok) return;
+    try {
+      store.restoreSnapshot(file, idx);
+      toast('已恢复，正在同步到三端');
+    } catch (err) {
+      toast('恢复失败：' + err.message, 4000);
+    }
   }
 
   /* ---------- Tab ---------- */
@@ -1291,6 +1358,46 @@
     container.addEventListener('dragstart', (e) => e.preventDefault()); // 关掉浏览器原生拖拽
   }
 
+  /* ---------- 公司页拖拽：桶内改顺序，跨桶自动改到期日 ---------- */
+  function bindWorkDrag() {
+    const board = $('#work-board');
+    if (!board) return;
+    makeSortable(board, {
+      itemSelector: '.item-card, .task',
+      keyOf: (el) => el.dataset.id,
+      onReorder: (ids) => {
+        /* 拖完先看每条现在落在哪个桶里（按 DOM 顺序扫桶标题），再决定要不要改到期日 */
+        const bucketOf = {};
+        let cur = null;
+        Array.prototype.slice.call(board.children).forEach((el) => {
+          if (el.classList && el.classList.contains('wb-head')) { cur = el.getAttribute('data-bucket'); return; }
+          const id = el.dataset ? el.dataset.id : null;
+          if (id) bucketOf[id] = cur;
+        });
+        const d = today();
+        const ranks = {};
+        ids.forEach((id, i) => { ranks[id] = i + 1; });
+        store.setRanks(ranks);                       // 顺序：整块板子一起重排 1..N
+        let moved = 0;
+        ids.forEach((id) => {
+          const t = byId(id);
+          if (!t || t.kind !== 'work' || t.done) return;
+          const bucket = bucketOf[id];
+          const nowBucket = Core.workStatus(t, d).bucket;
+          let target = null;
+          if (bucket === 'today' && nowBucket !== 'today') target = d;
+          else if (bucket === 'tomorrow' && nowBucket !== 'tomorrow') target = Core.shiftDate(d, 1);
+          else if (bucket === 'later' && (nowBucket === 'today' || nowBucket === 'tomorrow')) target = Core.shiftDate(d, 7);
+          if (target && t.due !== target) {
+            store.saveTask(Object.assign({}, t, { due: target }));
+            moved += 1;
+          }
+        });
+        toast(moved ? '顺序已保存 · ' + moved + ' 条改了到期日' : '顺序已保存');
+      }
+    });
+  }
+
   /* ---------- 计划拖拽 ---------- */
   function bindPlanDrag() {
     const board = $('#plan-board');
@@ -1526,6 +1633,7 @@
       revealItem(it.id);
       toast('已记录，已同步到上方清单');
     });
+    bindWorkDrag();
     bindPlanDrag();
     bindKeepDrag();
     bindNoteDrag();
@@ -1682,6 +1790,8 @@
         return;
       }
     }
+    const rs = e.target.closest('[data-restore]');
+    if (rs) { restoreSnapshot(rs.getAttribute('data-restore')); return; }
     if (e.target.closest('[data-close]')) closeItemModal();
     if (e.target.closest('[data-note-close]')) closeNote();
   }
@@ -1737,6 +1847,7 @@
     store.saveTask(next);
     closeItemModal();
     render();
+    if (isNew) revealItem(next.id);          // 新建的条目直接滚到眼前，别让人以为没建上
     toast(isNew ? '已创建' : '已保存');
   });
   $('#note-form').addEventListener('submit', (e) => {

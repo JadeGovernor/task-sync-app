@@ -438,6 +438,10 @@
   }
 
   function applyOp(file, value, op) {
+    /* 整文件替换：设置页的「数据恢复」，把某个本地历史快照整份推回云端 */
+    if (op && op.type === 'file_set' && op.value !== undefined) {
+      return { value: op.value, changed: JSON.stringify(op.value) !== JSON.stringify(value) };
+    }
     if (file === 'tasks') {
       if (op.type === 'task_set') {
         const t = op.task || {};

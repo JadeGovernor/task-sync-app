@@ -198,7 +198,23 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 .note-edit { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid var(--primary); border-radius: 8px; font-size: 12px; background: #fff; }
 .note-more { font-size: 11px; color: #94a3b8; padding-top: 2px; }
 
-.plan-board-card h3 { display: flex; align-items: center; gap: 8px; }
+.plan-board-card h3, .work-board-card h3 { display: flex; align-items: center; gap: 8px; }
+/* 公司页：一个可拖拽板子里按到期日分桶 */
+.work-board { margin-top: 2px; }
+.wb-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: #64748b;
+  margin: 10px 0 4px; padding-bottom: 3px; border-bottom: 1px dashed var(--line);
+}
+.wb-head:first-child { margin-top: 2px; }
+.wb-head .cnt { background: #eef2f7; color: #475569; border-radius: 999px; padding: 0 7px; font-size: 11px; font-weight: 500; }
+.wb-head .wb-note { color: #b91c1c; font-size: 11px; font-weight: 500; }
+/* 设置页：历史快照 */
+.hist-group { margin-top: 8px; }
+.hist-title { font-size: 12px; color: #64748b; margin-bottom: 2px; }
+.hist-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; color: #475569; }
+.hist-at { font-variant-numeric: tabular-nums; color: #94a3b8; }
+.hist-n { flex: 1; min-width: 0; }
 .urgent-note { background: #fee2e2; color: #b91c1c; border-radius: 999px; padding: 1px 8px; font-size: 11px; }
 .drag-handle { color: #cbd5e1; font-size: 13px; letter-spacing: -2px; cursor: grab; flex: none; padding: 0 2px; user-select: none; }
 .task.dragging { opacity: .35; }

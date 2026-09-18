@@ -1,4 +1,4 @@
-const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=32';
+const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=33';
 const l=await(await fetch(CDP+'/json/list')).json();
 const t=l.find(x=>x.type==='page'&&!x.url.startsWith('devtools'));
 const ws=new WebSocket(t.webSocketDebuggerUrl);let id=0;const p=new Map();

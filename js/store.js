@@ -9,6 +9,8 @@
   const K_STATE = 'ts_state_v2';
   const K_OUTBOX = 'ts_outbox_v2';
   const K_DEVICE = 'ts_device_v1';
+  const K_HIST = 'ts_hist_v1';    // 每次被远端覆盖前，把上一版留一份，用于「数据恢复」
+  const HIST_MAX = 20;
 
   function b64encode(str) {
     const bytes = new TextEncoder().encode(str);
@@ -107,7 +109,9 @@
       const rec = this.files[file];
       const headers = this._headers(false);
       if (conditional && rec.etag) headers['If-None-Match'] = rec.etag;
-      const res = await fetch(this.apiBase + rec.path, { headers });
+      /* cache:'no-store'：GitHub Contents API 会带 max-age=60，浏览器缓存可能把几分钟前的
+       * 旧快照当最新返回，用它算出来的内容再 PUT 回去就会把别人的新改动抹掉。 */
+      const res = await fetch(this.apiBase + rec.path, { headers, cache: 'no-store' });
       // 304：远端没变，直接复用本地副本。GitHub 对 304 不计速率配额。
       if (res.status === 304) {
         return { value: rec.value, sha: rec.sha, etag: rec.etag, notModified: true };
@@ -158,6 +162,35 @@
         this._touch(file); // 远端刚变过，之前发出的 GET 结果一律作废
       }
       return j.content ? j.content.sha : sha;
+    }
+
+    /* ---------- 本地快照历史（数据恢复用） ---------- */
+    _recordHistory(file, value) {
+      try {
+        if (value === undefined || value === null) return;
+        const txt = JSON.stringify(value);
+        if (txt === JSON.stringify(Core.fileDefault(file))) return;   // 空文件不用存
+        const hist = this._ls(K_HIST) || {};
+        const list = hist[file] || [];
+        if (list.length && list[0].txt === txt) return;               // 和最近一份一样就别重复存
+        list.unshift({ at: new Date().toISOString(), txt });
+        hist[file] = list.slice(0, HIST_MAX);
+        localStorage.setItem(K_HIST, JSON.stringify(hist));
+      } catch (e) { /* 本地存不下也不能影响同步 */ }
+    }
+    history(file) {
+      const hist = this._ls(K_HIST) || {};
+      return (hist[file] || []).map((e, i) => {
+        let value = null;
+        try { value = JSON.parse(e.txt); } catch (err) { value = null; }
+        return { index: i, at: e.at, value };
+      });
+    }
+    /* 把某个历史版本整份推回云端（三端同步） */
+    restoreSnapshot(file, index) {
+      const h = this.history(file)[index];
+      if (!h || h.value === null) throw new Error('这份快照读不出来了');
+      return this._mutate({ file, type: 'file_set', value: h.value });
     }
 
     _isOffline(err) {
@@ -228,6 +261,7 @@
           // 远端最新值 + 还没上传成功的本地操作 = 应该显示的内容
           const merged = this._materializeFrom(remote.value, f);
           const before = JSON.stringify(rec.value);
+          if (before !== JSON.stringify(merged)) this._recordHistory(f, rec.value);
           rec.etag = remote.etag || null;
           rec.sha = remote.sha;
           rec.value = merged;
@@ -247,61 +281,105 @@
       }
     }
 
-    async _syncOne(op) {
+    /* 推一条本地操作：先拉最新内容、叠上本条、整份写回。
+     * 拉取和写入之间如果有别的设备也提交过，GitHub 会返回 409（sha 过期）。
+     * 这时必须重新拉一次再叠再写，而不是把这条操作留在队列里反复重放旧内容。 */
+    async _syncOne(op, maxTries) {
       const rec = this.files[op.file];
-      const remote = await this._fetchRemote(op.file);
-      const r = Core.applyOp(op.file, remote.value, op);
-      if (!r.changed) {
-        // 远端已包含该操作效果（例如另一台设备已提交），无需重复写
-        rec.sha = remote.sha;
-        rec.loaded = true;
-        return false;
+      const tries = maxTries || 3;
+      let lastErr = null;
+      for (let i = 0; i < tries; i++) {
+        const remote = await this._fetchRemote(op.file);
+        const r = Core.applyOp(op.file, remote.value, op);
+        if (!r.changed) {
+          // 远端已包含该操作效果（例如另一台设备已提交），无需重复写
+          rec.sha = remote.sha;
+          rec.loaded = true;
+          return false;
+        }
+        try {
+          const sha = await this._putRemote(op.file, r.value, remote.sha);
+          rec.sha = sha;
+          rec.loaded = true;
+          // 推送期间用户可能又写了几条，要在「远端 + 本条」的基础上接着叠，不能丢
+          rec.value = this._materializeFrom(r.value, op.file);
+          return true;
+        } catch (err) {
+          lastErr = err;
+          const st = err && err.status;
+          if (st === 409 || st === 412 || st === 422) continue;   // 撞车：重拉一次再试
+          throw err;
+        }
       }
-      const sha = await this._putRemote(op.file, r.value, remote.sha);
-      rec.sha = sha;
-      rec.loaded = true;
-      // 推送期间用户可能又写了几条，要在「远端 + 本条」的基础上接着叠，不能丢
-      rec.value = this._materializeFrom(r.value, op.file);
-      return true;
+      throw lastErr || new Error('同步冲突，稍后自动重试');
     }
 
     async flush() {
       if (!this.token) return;
       if (this._flushing) return this._flushing;   // 已经有一次在跑，别重复推
-      this._flushing = this._doFlush();
-      try { return await this._flushing; } finally { this._flushing = null; }
+      /* 一轮 flush 只处理开始那一刻队列里的操作；期间（比如拖动同时改了顺序和到期日）
+       * 新入队的操作要靠下一轮。以前只能等 5 秒后的心跳，这里补成「推完还有就接着推」。 */
+      this._flushing = (async () => {
+        try {
+          for (let round = 0; round < 3; round++) {
+            const r = await this._doFlush();
+            if (!r || !r.pushed) break;              // 这一轮没推上去任何东西：别空转
+            if (!this._outbox().length) break;       // 队列空了
+          }
+        } finally { this._flushing = null; }
+      })();
+      return this._flushing;
     }
 
     async _doFlush() {
       const outbox = this._outbox();
-      if (!outbox.length) return;
+      if (!outbox.length) return { pushed: 0, failed: 0, skipped: 0 };
       // 旧版本留下的操作没有 _id，补一个，否则摘不干净会一直重放
       let patched = false;
       outbox.forEach((o) => { if (o._id == null) { o._id = Core.uid('op'); patched = true; } });
       if (patched) this._persistOutbox(outbox);
       this.setStatus('syncing', '同步中…');
       const doneIds = new Set();
-      let failed = false;
-      for (let i = 0; i < outbox.length && !failed; i++) {
+      const failed = new Map();   // _id -> { tries, _next }
+      let offline = false;
+      let skipped = 0;
+      let pushed = 0;
+      const now = Date.now();
+      for (let i = 0; i < outbox.length; i++) {
         const op = outbox[i];
+        if (op._next && op._next > now) { skipped += 1; continue; }   // 退避期内先不重试
         try {
           await this._syncOne(op);
+          pushed += 1;
           doneIds.add(op._id);
           this._dropFromOutbox(doneIds);   // 推成功一条就摘一条，期间新入队的原样保留
         } catch (err) {
-          failed = true;
-          if (this._isOffline(err)) {
-            this.setStatus('offline', '离线模式：改动已存本地，联网后自动同步');
-          } else {
-            this.setStatus('error', err.message, new Date());
-          }
+          if (this._isOffline(err)) { offline = true; break; }   // 断网：剩下的留在队列，别一条条白撞
+          /* 单条失败绝不能堵住整队：一条卡住就让后面所有改动都上不去，是最伤的 bug。 */
+          const tries = (op.tries || 0) + 1;
+          failed.set(op._id, { tries, _next: Date.now() + Math.min(120000, 5000 * Math.pow(2, Math.min(tries, 5))) });
         }
       }
-      if (!failed) {
-        this._persistState();
-        this.setStatus('ok', '已同步', new Date());
-        if (this.onChange) this.onChange();
+      if (offline) {
+        this.setStatus('offline', '离线模式：改动已存本地，联网后自动同步');
+        return { pushed, failed: failed.size, skipped, offline: true };
       }
+      if (failed.size) {
+        /* 把重试次数写回队列（重新读一次，别覆盖推送期间新入队的操作） */
+        const cur = this._outbox();
+        cur.forEach((o) => {
+          const f = failed.get(o._id);
+          if (f) { o.tries = f.tries; o._next = f._next; }
+        });
+        this._persistOutbox(cur);
+        this.setStatus('error', failed.size + ' 条改动没能上传，稍后自动重试', new Date());
+        if (this.onChange) this.onChange();
+        return { pushed, failed: failed.size, skipped };
+      }
+      this._persistState();
+      this.setStatus('ok', skipped ? '已同步（' + skipped + ' 条待重试）' : '已同步', new Date());
+      if (this.onChange) this.onChange();
+      return { pushed, failed: 0, skipped };
     }
 
     /* 本地立刻应用一条操作并进入同步队列 */
@@ -328,12 +406,14 @@
       return this._mutate({ file: 'tasks', type: 'task_set', task });
     }
     deleteTask(id) {
+      this._recordHistory('tasks', this.files.tasks.value);   // 删之前留一份，误删可恢复
       return this._mutate({ file: 'tasks', type: 'task_delete', id });
     }
     /* 一次请求删掉多条（清理已完成用），失败照常进离线队列 */
     deleteTasks(ids) {
       const list = (ids || []).filter(Boolean);
       if (!list.length) return false;
+      this._recordHistory('tasks', this.files.tasks.value);
       return this._mutate({ file: 'tasks', type: 'task_delete_many', ids: list });
     }
     setRanks(ranks) {

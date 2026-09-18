@@ -209,6 +209,7 @@
    * 正文里在句末写 ⏰2026-09-20（也认 ⏰9/20、⏰9月20日），这一行就成了倒计时。
    * 标记就写在正文里，不额外存字段 —— 少一份状态，就少一类同步冲突。 */
   const TIMER_MARK = '⏰';
+  const TIMER_RANK = { over: 0, today: 1, soon: 2, far: 3 };   // 越紧急排越前
   const TIMER_RE = /⏰\s*(?:(\d{4})\s*[-/.年]\s*)?(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*日?/;
   /* 这一行做完了没有：正文行首写 ✅ 就算完成（同样写在正文里，不额外存字段）。
      ✅ 和 ⏰ 可以并存：'✅ 买菜 ⏰2026-09-20' = 今天到期那件事已经打勾。 */
@@ -247,6 +248,7 @@
   function timersOf(text, today) {
     const d0 = today || todayStr();
     return String(text == null ? '' : text).split('\n').map((line, i) => {
+      if (isSubLine(line)) return null;        // ↳ 进展行本身不算一条倒计时
       const mk = parseTimerMarker(line);
       if (!mk) return null;
       const days = dayDiff(d0, mk.due);
@@ -256,8 +258,9 @@
       };
     }).filter(Boolean).sort((a, b) => {
       if (a.done !== b.done) return a.done ? 1 : -1;   // 打过勾的沉到最下面
-      if (a.due !== b.due) return a.due < b.due ? -1 : 1;
-      return a.line - b.line;
+      const ra = TIMER_RANK[a.state], rb = TIMER_RANK[b.state];
+      if (ra !== rb) return ra - rb;                   // 紧急的（已过期 / 今天）自动置顶
+      return a.line - b.line;                          // 同一档里按正文顺序 = 你拖出来的顺序
     });
   }
   /* 光标位置 → 第几行（从 0 数），越界一律夹到有效范围 */
@@ -301,6 +304,87 @@
     const body = stripDoneMark(lines[i]).replace(/^\s+/, '');
     lines[i] = done ? (body ? DONE_MARK + ' ' + body : DONE_MARK) : body;
     return lines.join('\n');
+  }
+
+  /* ---------- 倒计时那行下面的「进展」：正文里紧跟其后的 ↳ 行 ----------
+   * 在某句话下面写「  ↳ 09-18 已经打过电话了」，这条进展就挂在那句话上。
+   * 同样只写在正文里，不额外存字段；今日页提醒里能直接补记，不用回备忘录页。 */
+  const SUB_MARK = '↳';
+  const SUB_INDENT = '  ';
+  const SUB_RE = /^\s*↳/;
+  const SUB_TEXT_RE = /^\s*↳\s*(?:(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*)?(.*)$/;
+  const isSubLine = (line) => SUB_RE.test(String(line == null ? '' : line));
+  function parseSubLine(line) {
+    const m = SUB_TEXT_RE.exec(String(line == null ? '' : line));
+    if (!m) return null;
+    return {
+      md: m[1] ? pad(Number(m[1])) + '-' + pad(Number(m[2])) : '',
+      text: String(m[3] == null ? '' : m[3]).trim()
+    };
+  }
+  /* 第 n 行下面跟着的进展行 → [{ line, md, text }] */
+  function subLinesOf(text, lineIndex) {
+    const lines = String(text == null ? '' : text).split('\n');
+    if (!lines.length) return [];
+    const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
+    if (isSubLine(lines[i])) return [];      // ↳ 行自己不是「一句话」，下面挂的也不归它
+    const out = [];
+    for (let k = i + 1; k < lines.length && isSubLine(lines[k]); k += 1) {
+      out.push(Object.assign({ line: k }, parseSubLine(lines[k])));
+    }
+    return out;
+  }
+  /* 给第 n 行补一条进展：接在已有进展的最后面 */
+  function addSubLine(text, lineIndex, content, dateStr) {
+    const lines = String(text == null ? '' : text).split('\n');
+    const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
+    const body = String(content == null ? '' : content).replace(/[\r\n]+/g, ' ').trim();
+    if (!body) return lines.join('\n');
+    const md = String(dateStr || todayStr()).slice(5);
+    let at = i + 1;
+    while (at < lines.length && isSubLine(lines[at])) at += 1;
+    lines.splice(at, 0, SUB_INDENT + SUB_MARK + ' ' + md + ' ' + body);
+    return lines.join('\n');
+  }
+  /* 改某条进展的文字，日期原样保留 */
+  function setSubLineText(text, lineIndex, content) {
+    const lines = String(text == null ? '' : text).split('\n');
+    const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
+    if (!isSubLine(lines[i])) return lines.join('\n');
+    const cur = parseSubLine(lines[i]) || { md: '' };
+    const body = String(content == null ? '' : content).replace(/[\r\n]+/g, ' ').trim();
+    lines[i] = SUB_INDENT + SUB_MARK + (cur.md ? ' ' + cur.md : '') + (body ? ' ' + body : '');
+    return lines.join('\n');
+  }
+  function deleteSubLine(text, lineIndex) {
+    const lines = String(text == null ? '' : text).split('\n');
+    const i = Math.max(0, Math.min(Number(lineIndex) || 0, lines.length - 1));
+    if (!isSubLine(lines[i])) return lines.join('\n');
+    lines.splice(i, 1);
+    return lines.join('\n');
+  }
+  /* 拖动排序：按新顺序把「句子 + 它的进展行」整块搬一遍，别的行原地不动 */
+  function reorderLineBlocks(text, order) {
+    const lines = String(text == null ? '' : text).split('\n');
+    const starts = (order || []).map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < lines.length);
+    if (starts.length < 2) return lines.join('\n');
+    const blocks = starts.map((i) => {
+      const rows = [lines[i]];
+      for (let k = i + 1; k < lines.length && isSubLine(lines[k]); k += 1) rows.push(lines[k]);
+      return { i, rows };
+    });
+    const used = new Set();
+    blocks.forEach((b) => b.rows.forEach((_, k) => used.add(b.i + k)));
+    const total = blocks.reduce((n, b) => n + b.rows.length, 0);
+    if (used.size !== total) return lines.join('\n');   // 块之间有重叠 → 不动，别搞乱
+    const at = Math.min.apply(null, starts);
+    const keep = [];
+    for (let i = 0; i < lines.length; i += 1) if (!used.has(i)) keep.push(i);
+    const before = keep.filter((i) => i < at).length;
+    const out = keep.slice(0, before).map((i) => lines[i]);
+    blocks.forEach((b) => b.rows.forEach((r) => out.push(r)));
+    keep.slice(before).forEach((i) => out.push(lines[i]));
+    return out.join('\n');
   }
 
   /* ---------- 文件级合并操作（离线队列与远程合并共用） ---------- */
@@ -582,6 +666,7 @@
     KINDS, FREQS, kindLabel, freqLabel, newItem, keepOrdered, memoOf, memoText,
     TIMER_MARK, parseTimerMarker, stripTimerMarker, timerStateOf, fmtLeft, timersOf,
     DONE_MARK, hasDoneMark, stripDoneMark, setLineDone,
+    SUB_MARK, isSubLine, parseSubLine, subLinesOf, addSubLine, setSubLineText, deleteSubLine, reorderLineBlocks,
     lineIndexAt, setLineTimer, clearLineTimer, setLineText,
     WEEKDAY_LABELS, WEEKDAY_SHORT, loopWeekdays, loopLabel, loopState, loopOn, setLoopDone, weekIndex,
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, setNoteDone, editNote, noteDone, upsertItem, removeItem,

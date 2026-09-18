@@ -598,7 +598,36 @@ input.timer-date { width: auto; max-width: 150px; padding: 4px 6px; font-size: 1
 .timer-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .timer-add .timer-add-label { font-size: 13px; font-weight: 600; color: #0f172a; }
 .timer-add input[type=date] { width: auto; max-width: 170px; padding: 6px 8px; font-size: 13px; }
+/* 倒计时的一行 + 它下面的「↳ 进展」：今日页与琐事 / 创意页同款 */
+.timer-item { display: block; margin-bottom: 6px; }
+.timer-item .timer-row { margin-bottom: 0; }
+.timer-subs { margin: 2px 0 0 34px; display: flex; flex-direction: column; gap: 3px; }
+.timer-sub {
+  display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #475569;
+  background: #f8fafc; border-left: 2px solid #cbd5e1; border-radius: 0 8px 8px 0; padding: 3px 8px;
+}
+.timer-sub .sub-md { flex: 0 0 auto; color: #94a3b8; font-variant-numeric: tabular-nums; }
+.timer-sub .sub-text { flex: 1 1 auto; cursor: text; border-radius: 6px; overflow-wrap: anywhere; }
+.timer-sub .sub-text:hover { background: rgba(15,23,42,.06); }
+.timer-sub input.sub-edit { flex: 1 1 auto; width: auto; padding: 3px 6px; font-size: 12.5px; }
+.timer-sub .sub-del {
+  flex: 0 0 auto; width: 22px; height: 22px; padding: 0; line-height: 1; cursor: pointer;
+  border: 1px solid var(--line); background: #fff; color: #94a3b8; border-radius: 6px;
+}
+.timer-sub .sub-del:hover { color: #b91c1c; border-color: #fca5a5; background: #fef2f2; }
+.timer-row .timer-sub-add {
+  flex: 0 0 auto; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569;
+  border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.timer-row .timer-sub-add:hover { background: #eef2ff; border-color: #a5b4fc; color: #3730a3; }
+.timer-sub-add-form { display: flex; gap: 6px; margin: 6px 0 0 34px; }
+.timer-sub-add-form input { flex: 1 1 auto; width: auto; padding: 5px 8px; font-size: 13px; }
+.timer-sub-add-form button {
+  flex: 0 0 auto; border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3;
+  border-radius: 8px; padding: 5px 10px; font-size: 12.5px; cursor: pointer;
+}
 @media (max-width: 700px) {
   .timer-row .timer-text { flex: 1 1 60%; }
   input.timer-date { max-width: 100%; }
+  .timer-subs, .timer-sub-add-form { margin-left: 20px; }
 }

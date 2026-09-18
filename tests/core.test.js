@@ -510,4 +510,51 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(Core.clearLineTimer('✅ 买牛奶 ⏰9/20', 0), '买牛奶', '取消倒计时时 ✅ 一起清掉');
 }
 
+/* 倒计时那行下面的「↳ 进展」：补记 / 改 / 删 / 连同句子一起拖动 */
+{
+  const D2 = '2026-09-18';
+  const t0 = '买菜和牛奶 ⏰2026-09-20\n交房租 ⏰2026-09-25';
+  const t1 = Core.addSubLine(t0, 0, '已经买了牛奶', D2);
+  assert.strictEqual(t1, '买菜和牛奶 ⏰2026-09-20\n  ↳ 09-18 已经买了牛奶\n交房租 ⏰2026-09-25', '进展插在那一行下面');
+  const t2 = Core.addSubLine(t1, 0, '牛奶换成低脂的', D2);
+  assert.strictEqual(t2.split('\n')[2], '  ↳ 09-18 牛奶换成低脂的', '第二条进展接在第一条后面');
+  const subs = Core.subLinesOf(t2, 0);
+  assert.deepStrictEqual(subs.map((x) => x.line), [1, 2]);
+  assert.strictEqual(subs[0].md, '09-18');
+  assert.strictEqual(subs[0].text, '已经买了牛奶');
+  assert.strictEqual(Core.subLinesOf(t2, 1).length, 0, '进展行自己没有进展');
+  assert.strictEqual(Core.subLinesOf(t2, 2).length, 0, '最后一条进展后面没有了');
+  assert.strictEqual(Core.addSubLine(t2, 0, '   ', D2), t2, '空内容不写');
+  assert.strictEqual(Core.addSubLine(t2, 9, '越界就夹到最后一行', D2).split('\n').length, 5);
+  assert.strictEqual(Core.setSubLineText(t2, 1, '已经买好了'),
+    '买菜和牛奶 ⏰2026-09-20\n  ↳ 09-18 已经买好了\n  ↳ 09-18 牛奶换成低脂的\n交房租 ⏰2026-09-25');
+  assert.strictEqual(Core.setSubLineText(t2, 0, '乱改'), t2, '不是进展行就不动');
+  assert.strictEqual(Core.deleteSubLine(t2, 1),
+    '买菜和牛奶 ⏰2026-09-20\n  ↳ 09-18 牛奶换成低脂的\n交房租 ⏰2026-09-25');
+  assert.strictEqual(Core.deleteSubLine(t2, 0), t2, '不是进展行就不删');
+  assert.strictEqual(Core.isSubLine('  ↳ 09-18 x'), true);
+  assert.strictEqual(Core.isSubLine('买菜'), false);
+
+  /* ↳ 行本身不算一条倒计时（哪怕里面写了 ⏰）；它也不抢句子的行号 */
+  const t3 = Core.addSubLine('买菜 ⏰2026-09-20', 0, '顺便 ⏰9/30', D2);
+  assert.strictEqual(Core.timersOf(t3, D2).length, 1, '进展行不会另立一条倒计时');
+  assert.strictEqual(Core.timersOf(t3, D2)[0].line, 0);
+
+  /* 排序：先分紧急档（已过期 → 今天 → 3 天内 → 更远），同一档里按正文顺序 */
+  const t4 = 'A ⏰2026-10-30\nB ⏰2026-09-20\nC ⏰2026-09-05';
+  assert.deepStrictEqual(Core.timersOf(t4, D2).map((t) => t.text), ['C', 'B', 'A'], '已过期 → 3 天内 → 更远');
+  const t5 = 'A ⏰2026-10-30\nB ⏰2026-09-20\nC ⏰2026-09-18';
+  assert.deepStrictEqual(Core.timersOf(t5, D2).map((t) => t.text), ['C', 'B', 'A'], '今天 → 3 天内 → 更远');
+  const t6 = 'A ⏰2026-09-25\nB ⏰2026-09-09\nC ⏰2026-09-24';
+  assert.deepStrictEqual(Core.timersOf(t6, D2).map((t) => t.text), ['B', 'A', 'C'], '同一档里按正文顺序（= 拖出来的顺序）');
+
+  /* 拖动排序：句子连着它的进展整块搬家，别的行原地不动 */
+  const t7 = 'A ⏰2026-09-20\n  ↳ 09-18 a1\nB ⏰2026-09-20\n闲话\nC ⏰2026-09-20';
+  assert.strictEqual(Core.reorderLineBlocks(t7, [4, 0, 2]),
+    'C ⏰2026-09-20\nA ⏰2026-09-20\n  ↳ 09-18 a1\nB ⏰2026-09-20\n闲话', '整块搬，进展跟着走');
+  assert.strictEqual(Core.reorderLineBlocks(t7, [4]), t7, '只有一个块就不动');
+  assert.strictEqual(Core.reorderLineBlocks(t7, [0, 2, 99]), t7, '行号越界的块直接忽略');
+  assert.strictEqual(Core.reorderLineBlocks('', [0, 1]), '', '空正文不炸');
+}
+
 console.log('✅ core.test.js（V2）全部通过');

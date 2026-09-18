@@ -1,4 +1,4 @@
-const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=30';
+const CDP='http://127.0.0.1:9334', ORIGIN='http://127.0.0.1:8123', URL_=ORIGIN+'/index.html?v=31';
 const l=await(await fetch(CDP+'/json/list')).json();
 const t=l.find(x=>x.type==='page'&&!x.url.startsWith('devtools'));
 const ws=new WebSocket(t.webSocketDebuggerUrl);let id=0;const p=new Map();
@@ -11,6 +11,20 @@ const ev=async x=>{const r=await send('Runtime.evaluate',{expression:x,awaitProm
 const load=u=>new Promise(r=>{const h=e=>{const m=JSON.parse(e.data);if(m.method==='Page.loadEventFired'){ws.removeEventListener('message',h);r()}};ws.addEventListener('message',h);send('Page.navigate',{url:u})});
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const R=[];const ok=(n,c,x)=>R.push({n,pass:!!c,x});
+const mouse=(type,x,y,extra={})=>send('Input.dispatchMouseEvent',Object.assign({type,x,y,button:'left',clickCount:1},extra));
+const realDrag=async(from,to,steps=8)=>{
+  await mouse('mousePressed',from.x,from.y,{buttons:1});
+  await wait(60);
+  let mid=null;
+  for(let i=1;i<=steps;i+=1){
+    const x=from.x+(to.x-from.x)*i/steps, y=from.y+(to.y-from.y)*i/steps;
+    await mouse('mouseMoved',x,y,{buttons:1});
+    if(i===Math.ceil(steps/2)){mid=await ev(`document.body.classList.contains('is-dragging')`)}
+    await wait(25);
+  }
+  await mouse('mouseReleased',to.x,to.y,{buttons:0});
+  return mid;
+};
 process.on('uncaughtException',async e=>{console.log('CRASH: '+e.message);try{await dump()}catch(_){}process.exit(1)});
 process.on('unhandledRejection',async e=>{console.log('CRASH: '+(e&&e.message||e));try{await dump()}catch(_){}process.exit(1)});
 const dump=async()=>{console.log('--- 已完成用例 ---');R.forEach(r=>console.log((r.pass?'PASS':'FAIL')+' '+r.n+(r.pass?'':'  <= '+JSON.stringify(r.x))));console.log('总计 '+R.filter(r=>r.pass).length+'/'+R.length)};
@@ -196,6 +210,93 @@ ok('3.6q 取消也同步到远端', !(await ev(`JSON.stringify(window.__mock.fil
 await goTab('今日');
 ok('3.6r 今日页也回到全景（两条都没勾）', (await todayRowsInfo()).every(r=>!r.checked));
 await goTab('琐事');
+
+// ===== 3.7) 今日页里直接补进展 / 删倒计时 / 拖动排序（不用回琐事 / 创意） =====
+const findItem = (box,t)=>`[...document.querySelectorAll('${box} .timer-item')].find(x=>x.querySelector('.timer-text').textContent===${JSON.stringify(t)})`;
+const subInfo = (box)=>ev(`[...document.querySelectorAll('${box} .timer-sub')].map(s=>({md:s.querySelector('.sub-md').textContent,text:s.querySelector('.sub-text').textContent}))`);
+const setMemo = async (text)=>{await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.value=${JSON.stringify(text)};ta.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);await wait(1400)};
+
+await goTab('今日');
+ok('3.7a 今日页每行都有 ＋进展 / ✕ / 日期', await ev(`document.querySelectorAll('#today-timers [data-action="sub-add"]').length===2&&document.querySelectorAll('#today-timers [data-action="timer-del"]').length===2&&document.querySelectorAll('#today-timers .timer-date').length===2`));
+ok('3.7b 今日页整条是拖动单元', await ev(`[...document.querySelectorAll('#today-timers .timer-item')].every(x=>x.querySelector('.timer-row'))`));
+
+await ev(`(()=>{const i=${findItem('#today-timers','买菜和牛奶')};i.querySelector('[data-action="sub-add"]').click();return 1})()`);
+ok('3.7c 点＋进展长出输入框', await ev(`!!document.querySelector('#today-timers .timer-sub-add-form input')`));
+await ev(`(()=>{const f=document.querySelector('#today-timers .timer-sub-add-form');f.querySelector('input').value='已经买好了';f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));return 1})()`);
+await wait(600);
+const memoNow=()=>ev(`(window.__mock.files()['tasks.json'].find(t=>t.kind==='memo')||{}).memo`);
+const memoAfterSub=await memoNow();
+ok('3.7d 进展写进琐事正文（今天日期 + ↳）', memoAfterSub.includes('  ↳ '+d0.slice(5)+' 已经买好了'), memoAfterSub);
+const subLines=memoAfterSub.split('\n');
+const parentAt=subLines.findIndex((l)=>l.includes('买菜和牛奶'));
+ok('3.7e 进展紧跟在那一句话下面', subLines[parentAt+1].trim()==='↳ '+d0.slice(5)+' 已经买好了', JSON.stringify(subLines));
+ok('3.7f 今日页立刻显示这条进展', (await subInfo('#today-timers')).some(s=>s.text==='已经买好了'), JSON.stringify(await subInfo('#today-timers')));
+ok('3.7g 今日页补的进展已同步到远端', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes(${JSON.stringify('↳ '+d0.slice(5)+' 已经买好了')})`));
+
+await goTab('琐事');
+ok('3.7h 琐事板也显示同一条进展', (await subInfo('#memo-timers')).some(s=>s.text==='已经买好了'), JSON.stringify(await subInfo('#memo-timers')));
+ok('3.7i 进展被算作那句话的一部分（没多出倒计时）', (await rows())===3, await rows());
+
+await ev(`(()=>{const s=[...document.querySelectorAll('#memo-timers .timer-sub')].find(x=>x.querySelector('.sub-text').textContent==='已经买好了');s.querySelector('.sub-text').click();return 1})()`);
+ok('3.7j 点进展的文字变成输入框', await ev(`!!document.querySelector('#memo-timers .timer-sub input.sub-edit')`));
+await ev(`(()=>{const i=document.querySelector('#memo-timers .timer-sub input.sub-edit');i.value='已经买好了，还买了鸡蛋';i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1})()`);
+await wait(600);
+ok('3.7k 改完写回正文、日期还在', (await memoVal()).includes('↳ '+d0.slice(5)+' 已经买好了，还买了鸡蛋'), await memoVal());
+
+await ev(`(()=>{const s=[...document.querySelectorAll('#memo-timers .timer-sub')].find(x=>x.querySelector('.sub-text').textContent==='已经买好了，还买了鸡蛋');s.querySelector('[data-action="sub-del"]').click();return 1})()`);
+await wait(600);
+ok('3.7l 删掉这条进展', !(await memoNow()).includes('已经买好了')&&!(await memoNow()).includes('↳'), await memoNow());
+ok('3.7m 删完那句话本身还在', (await memoNow()).includes('买菜和牛奶 ⏰'+d0), await memoNow());
+
+/* 今日页 ✕ = 去掉倒计时标记，正文那句话保留 */
+await goTab('今日');
+await ev(`(()=>{const i=${findItem('#today-timers','牛奶过期了')};i.querySelector('[data-action="timer-del"]').click();return 1})()`);
+await wait(600);
+const memoAfterDel=await memoNow();
+ok('3.7n 今日页 ✕ 去掉倒计时，正文那句话留着', memoAfterDel.includes('牛奶过期了')&&!memoAfterDel.includes('⏰'+dOver), memoAfterDel);
+ok('3.7o 今日页那张卡片跟着少一条', await ev(`document.querySelectorAll('#today-timers .timer-item').length===1`));
+
+/* 拖动排序：同一档里两条（都是今天），把下面那条拖到上面 */
+await goTab('琐事');
+await setMemo('甲今天 ⏰'+d0+'\n乙今天 ⏰'+d0);
+ok('3.7p 板上按正文顺序排', JSON.stringify((await rowInfo()).map(r=>r.text))===JSON.stringify(['甲今天','乙今天']), await rowInfo());
+const centers=await ev(`(()=>{
+  const find=(t)=>[...document.querySelectorAll('#memo-timers .timer-item')].find(x=>x.querySelector('.timer-text').textContent===t);
+  const a=find('甲今天'), b=find('乙今天');
+  b.scrollIntoView({block:'center'});
+  const ca=a.querySelector('.timer-text').getBoundingClientRect(), cb=b.querySelector('.timer-text').getBoundingClientRect();
+  return {a:{x:Math.round(ca.left+ca.width/2),y:Math.round(ca.top+ca.height/2)},b:{x:Math.round(cb.left+cb.width/2),y:Math.round(cb.top+cb.height/2)}}})()`);
+const dragging=await realDrag(centers.b,{x:centers.a.x,y:centers.a.y-6});
+ok('3.7q 整条任意位置都能拖起来', dragging===true, dragging);
+await wait(700);
+ok('3.7r 拖完正文顺序真的换了', (await memoVal()).split('\n').slice(0,2).join('|')==='乙今天 ⏰'+d0+'|甲今天 ⏰'+d0, await memoVal());
+ok('3.7s 板上顺序跟着换', JSON.stringify((await rowInfo()).map(r=>r.text))===JSON.stringify(['乙今天','甲今天']), await rowInfo());
+ok('3.7t 拖动顺序也同步到远端', (await memoNow()).startsWith('乙今天 ⏰'+d0+'\n甲今天 ⏰'+d0), await memoNow());
+
+/* 今日页拖动：跨备忘录不互相搬（只在自己那张纸上换位置） */
+await goTab('创意');
+await setMemo('创意今天 ⏰'+d0);
+await goTab('今日');
+const todayOrder=()=>ev(`[...document.querySelectorAll('#today-timers .timer-text')].map(x=>x.textContent)`);
+ok('3.7u 今日页把两张备忘录的提醒并在一起', JSON.stringify(await todayOrder())===JSON.stringify(['乙今天','创意今天','甲今天']), await todayOrder());
+const c2=await ev(`(()=>{
+  const find=(t)=>[...document.querySelectorAll('#today-timers .timer-item')].find(x=>x.querySelector('.timer-text').textContent===t);
+  const a=find('乙今天'), b=find('甲今天');
+  b.scrollIntoView({block:'center'});
+  const ca=a.querySelector('.timer-text').getBoundingClientRect(), cb=b.querySelector('.timer-text').getBoundingClientRect();
+  return {a:{x:Math.round(ca.left+ca.width/2),y:Math.round(ca.top+ca.height/2)},b:{x:Math.round(cb.left+cb.width/2),y:Math.round(cb.top+cb.height/2)}}})()`);
+await realDrag(c2.b,{x:c2.a.x,y:c2.a.y-6});
+await wait(700);
+ok('3.7v 今日页拖完琐事的顺序也换了', (await memoNow()).startsWith('甲今天 ⏰'+d0+'\n乙今天'), await memoNow());
+ok('3.7w 创意那张纸一个字没动', (await ev(`(window.__mock.files()['tasks.json'].find(t=>t.kind==='idea')||{}).memo`))==='创意今天 ⏰'+d0);
+
+/* 把现场恢复到 3.6 结束时的样子，后面第 4 段还要用 */
+await goTab('琐事');
+await setMemo('牛奶过期了 ⏰'+dOver+'\n买菜和牛奶 ⏰'+d0+'\n交房租和水电 ⏰'+d10);
+await goTab('创意');
+await setMemo('做一个自动播演讲的闹钟 ⏰'+d1);
+await goTab('琐事');
+ok('3.7x 恢复：琐事仍是 3 条、创意仍是 1 条', (await rows())===3, await rowInfo());
 
 // ===== 4) 刷新（换设备/新会话）后还在 =====
 await load(URL_);await wait(1800);

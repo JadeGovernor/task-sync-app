@@ -470,27 +470,42 @@
     return Core.memoText(items(), MEMOS[tab].kind);
   }
   const EMPTY_LINE_TEXT = '（这一行还没写字）';
-  /* src 传了就只读展示（今日页提醒用）：带来源标签、不带改日期/删除按钮。
-     文字一律可点，点开就地改，不用回琐事 / 创意页。 */
+  /* 倒计时的一行：方框打勾 / 点字改内容 / 改日期 / ＋进展 / ✕ 去掉倒计时，整条可拖动排序。
+     今日页和琐事 / 创意页用的是同一套 —— 在这里改完就是改了那张备忘录的正文，不用来回跑。 */
+  function timerSubsHTML(t) {
+    const subs = t.subs || [];
+    if (!subs.length) return '';
+    return '<div class="timer-subs">' + subs.map((x) =>
+      '<div class="timer-sub" data-action="sub-edit" data-sub-line="' + x.line + '" title="点一下改这条进展">' +
+        '<span class="sub-md">' + esc(x.md || '进展') + '</span>' +
+        '<span class="sub-text">' + esc(x.text || '（空）') + '</span>' +
+        '<button class="sub-del" type="button" data-action="sub-del" data-sub-line="' + x.line + '" title="删掉这条进展">✕</button>' +
+      '</div>').join('') + '</div>';
+  }
   function timerRowHTML(t, src, tab) {
     const done = !!t.done;
-    return '<div class="timer-row is-' + t.state + (done ? ' is-done' : '') + '" data-line="' + t.line + '"' +
+    return '<div class="timer-item" data-line="' + t.line + '"' +
       (tab ? ' data-src-tab="' + esc(tab) + '"' : '') + '>' +
-      '<label class="cb timer-cb" title="' + (done ? '取消打勾' : '打勾完成') + '">' +
-      '<input type="checkbox" data-action="timer-toggle" data-line="' + t.line + '"' + (done ? ' checked' : '') + ' />' +
-      '<span class="box"></span></label>' +
-      '<span class="timer-left">' + esc(Core.fmtLeft(t.days)) + '</span>' +
-      '<span class="timer-text" data-action="timer-edit" title="点一下直接改这句话">' +
-        esc(t.text || EMPTY_LINE_TEXT) + '</span>' +
-      (src ? '<span class="timer-src">' + esc(src) + '</span>' : '') +
-      '<span class="timer-due">' + esc(t.due) + '</span>' +
-      (src ? '' :
+      '<div class="timer-row is-' + t.state + (done ? ' is-done' : '') + '">' +
+        '<label class="cb timer-cb" title="' + (done ? '取消打勾' : '打勾完成') + '">' +
+        '<input type="checkbox" data-action="timer-toggle" data-line="' + t.line + '"' + (done ? ' checked' : '') + ' />' +
+        '<span class="box"></span></label>' +
+        '<span class="timer-left">' + esc(Core.fmtLeft(t.days)) + '</span>' +
+        '<span class="timer-text" data-action="timer-edit" title="点一下直接改这句话">' +
+          esc(t.text || EMPTY_LINE_TEXT) + '</span>' +
+        (src ? '<span class="timer-src">' + esc(src) + '</span>' : '') +
+        '<span class="timer-due">' + esc(t.due) + '</span>' +
         '<input class="timer-date" type="date" data-action="timer-date" data-line="' + t.line + '" value="' + esc(t.due) + '" title="改到期日" />' +
-        '<button class="timer-del" type="button" data-action="timer-del" data-line="' + t.line + '" title="去掉这条倒计时">✕</button>') +
-      '</div>';
+        '<button class="timer-sub-add" type="button" data-action="sub-add" data-line="' + t.line + '" title="记一条进展，不用回备忘录页">＋进展</button>' +
+        '<button class="timer-del" type="button" data-action="timer-del" data-line="' + t.line + '" title="去掉这条倒计时（正文那句话保留）">✕</button>' +
+      '</div>' + timerSubsHTML(t) + '</div>';
+  }
+  /* 每条倒计时带上它下面的「↳ 进展」行 */
+  function timersWithSubs(text) {
+    return Core.timersOf(text, today()).map((t) => Object.assign({}, t, { subs: Core.subLinesOf(text, t.line) }));
   }
   function timerBoardInner(tab) {
-    const list = Core.timersOf(memoTextNow(tab), today());
+    const list = timersWithSubs(memoTextNow(tab));
     if (!list.length) return '';
     const doneN = list.filter((t) => t.done).length;
     const over = list.filter((t) => t.state === 'over' && !t.done).length;
@@ -499,7 +514,7 @@
         (doneN ? '<b class="t-done">已打勾 ' + doneN + '</b>' : '') +
         (over ? '<b class="t-over">已过期 ' + over + '</b>' : '') +
         (soon ? '<b class="t-soon">3 天内 ' + soon + '</b>' : '') +
-        '<span class="timer-head-hint">标记就写在正文那一行里</span></div>' +
+        '<span class="timer-head-hint">整条可拖动排序 · 紧急的自动置顶</span></div>' +
       list.map((t) => timerRowHTML(t)).join('');
   }
   function timerBoardHTML(tab) {
@@ -666,15 +681,25 @@
     const d = today();
     const hot = [];
     Object.keys(MEMOS).forEach((tab) => {
-      Core.timersOf(Core.memoText(items(), MEMOS[tab].kind), d).forEach((t) => {
+      timersWithSubs(Core.memoText(items(), MEMOS[tab].kind)).forEach((t) => {
         if (t.days <= 0) hot.push({ t, src: MEMOS[tab].title.replace('备忘录', ''), tab });
       });
     });
-    hot.sort((a, b) => (a.t.due < b.t.due ? -1 : a.t.due > b.t.due ? 1 : 0));
+    /* 过期的永远压在今天的上面；同一档里按正文顺序 —— 也就是你在板上拖出来的顺序 */
+    const rank = { over: 0, today: 1 };
+    const tabs = Object.keys(MEMOS);
+    hot.sort((a, b) => {
+      const ra = rank[a.t.state] == null ? 9 : rank[a.t.state];
+      const rb = rank[b.t.state] == null ? 9 : rank[b.t.state];
+      if (ra !== rb) return ra - rb;
+      if (a.t.line !== b.t.line) return a.t.line - b.t.line;   // 同一档里按正文顺序（拖出来的顺序）
+      return tabs.indexOf(a.tab) - tabs.indexOf(b.tab);        // 行号一样时按 琐事 → 创意
+    });
     return hot;
   }
-  const TODAY_TIMER_HINT = '琐事 / 创意里标了倒计时、今天到期或已经过期的那几句；' +
-    '点前面的方框就能直接打勾（改的仍是琐事 / 创意里那一行），打勾的会划掉沉到最下面。';
+  const TODAY_TIMER_HINT = '琐事 / 创意里标了倒计时、今天到期或已经过期的那几句。' +
+    '方框打勾 · 点字改内容 · 改日期 · ＋进展补记 · ✕ 去掉倒计时 —— 改的都是琐事 / 创意里那一行，不用再回去改；' +
+    '整条可拖动排序（只在同一张备忘录里生效）。';
   function todayTimersBodyHTML() {
     const hot = todayTimerRows();
     if (!hot.length) return '';
@@ -1107,7 +1132,7 @@
        而拖动中的元素此时挂在 body 下，容器级监听拦不到，所以在这里一并拦掉 */
     document.addEventListener('dragstart', (e) => {
       const t = e.target;
-      if (t && t.closest && t.closest('.note-line, .item-card, .task, .sort-ph')) e.preventDefault();
+      if (t && t.closest && t.closest('.note-line, .item-card, .task, .sort-ph, .timer-item')) e.preventDefault();
     }, true);
   }
 
@@ -1281,6 +1306,142 @@
     });
   }
 
+  /* ---------- 倒计时板的操作（琐事 / 创意页与今日页共用一套） ---------- */
+  /* ＋进展：在那一行下面长出 ↳ 行，写回它所属的备忘录 */
+  function beginSubAdd(item, tab) {
+    if (!item || item.querySelector('.timer-sub-add-form')) return;
+    const line = Number(item.getAttribute('data-line'));
+    const form = document.createElement('form');
+    form.className = 'timer-sub-add-form';
+    form.innerHTML = '<input type="text" maxlength="200" placeholder="记一条进展，回车保存（自动带日期）" />' +
+      '<button type="submit">记下</button>';
+    item.appendChild(form);
+    const inp = form.querySelector('input');
+    inp.focus();
+    let settled = false;
+    const commit = () => {
+      if (settled) return;
+      settled = true;
+      const v = inp.value.replace(/\s+/g, ' ').trim();
+      if (!v) { form.remove(); return; }
+      applyMemoText(tab, Core.addSubLine(memoTextNow(tab), line, v, today()));
+      refreshAfterTimerEdit(tab);
+      toast('进展已记下 · 已同步');
+    };
+    form.addEventListener('submit', (e) => { e.preventDefault(); commit(); });
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); settled = true; form.remove(); }
+    });
+    inp.addEventListener('blur', () => setTimeout(commit, 120));
+  }
+  /* 点进展的文字 → 就地改（回车 / 失焦提交，Esc 取消） */
+  function beginSubEdit(row, tab) {
+    if (!row || row.classList.contains('is-editing')) return;
+    const span = row.querySelector('.sub-text');
+    if (!span) return;
+    const line = Number(row.getAttribute('data-sub-line'));
+    const before = span.textContent;
+    row.classList.add('is-editing');
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'sub-edit';
+    inp.value = before;
+    span.replaceWith(inp);
+    inp.focus();
+    inp.select();
+    let settled = false;
+    const settle = (save) => {
+      if (settled) return;
+      settled = true;
+      const v = inp.value.replace(/\s+/g, ' ').trim();
+      if (!save || v === before) { refreshAfterTimerEdit(tab); return; }
+      applyMemoText(tab, Core.setSubLineText(memoTextNow(tab), line, v));
+      refreshAfterTimerEdit(tab);
+      toast('这条进展改好了');
+    };
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); settle(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); settle(false); }
+    });
+    inp.addEventListener('blur', () => settle(true));
+  }
+  /* 板上的通用操作：打勾 / 点字改 / 改日期 / ＋进展 / 删进展 / ✕ 去掉倒计时 */
+  function bindTimerBoard(el, fallbackTab) {
+    if (!el) return;
+    const itemOf = (target) => (target && target.closest ? target.closest('.timer-item') : null);
+    el.addEventListener('click', (e) => {
+      const item = itemOf(e.target);
+      if (!item) return;
+      const tab = item.getAttribute('data-src-tab') || fallbackTab;
+      if (!MEMOS[tab]) return;
+      const line = Number(item.getAttribute('data-line'));
+      const subDel = e.target.closest('[data-action="sub-del"]');
+      if (subDel) {
+        applyMemoText(tab, Core.deleteSubLine(memoTextNow(tab), Number(subDel.getAttribute('data-sub-line'))));
+        refreshAfterTimerEdit(tab);
+        toast('已删掉这条进展');
+        return;
+      }
+      if (e.target.closest('[data-action="sub-add"]')) { beginSubAdd(item, tab); return; }
+      const sub = e.target.closest('[data-action="sub-edit"]');
+      if (sub) { beginSubEdit(sub, tab); return; }
+      if (e.target.closest('[data-action="timer-del"]')) {
+        applyMemoText(tab, Core.clearLineTimer(memoTextNow(tab), line));
+        refreshAfterTimerEdit(tab);
+        toast('已去掉这条倒计时（正文那句话留着）');
+        return;
+      }
+      if (e.target.closest('[data-action="timer-edit"]')) beginTimerEdit(item, tab);
+    });
+    el.addEventListener('change', (e) => {
+      const item = itemOf(e.target);
+      if (!item) return;
+      const tab = item.getAttribute('data-src-tab') || fallbackTab;
+      if (!MEMOS[tab]) return;
+      const cb = e.target.closest('[data-action="timer-toggle"]');
+      if (cb) { toggleTimerDone(item, tab, cb.checked); return; }
+      const inp = e.target.closest('[data-action="timer-date"]');
+      if (!inp) return;
+      const due = inp.value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) { refreshAfterTimerEdit(tab); return toast('日期不对'); }
+      applyMemoText(tab, Core.setLineTimer(memoTextNow(tab), Number(item.getAttribute('data-line')), due));
+      refreshAfterTimerEdit(tab);
+      toast('已改到 ' + due + ' · ' + Core.fmtLeft(Core.dayDiff(today(), due)));
+    });
+  }
+  /* 拖动排序：句子连着它的进展行整块搬家；不同备忘录之间不互相搬 */
+  function bindTimerDrag() {
+    [[$('#memo-timers'), current], [$('#today-timers'), null]].forEach((pair) => {
+      const el = pair[0];
+      if (!el) return;
+      makeSortable(el, {
+        itemSelector: '.timer-item',
+        ignoreSelector: SORT_IGNORE + ', .timer-sub, .timer-subs',
+        keyOf: (x) => Number(x.dataset.line) + (x.dataset.srcTab ? ':' + x.dataset.srcTab : ''),
+        onReorder: (order) => applyTimerOrder(pair[1], order)
+      });
+    });
+  }
+  function applyTimerOrder(fallbackTab, order) {
+    const groups = new Map();
+    (order || []).forEach((k) => {
+      const parts = String(k).split(':');
+      const tab = parts[1] || fallbackTab;
+      if (!MEMOS[tab]) return;
+      if (!groups.has(tab)) groups.set(tab, []);
+      groups.get(tab).push(Number(parts[0]));
+    });
+    let changed = false;
+    groups.forEach((lines, tab) => {
+      if (lines.length < 2) return;
+      const before = memoTextNow(tab);
+      const after = Core.reorderLineBlocks(before, lines);
+      if (after !== before) { applyMemoText(tab, after); changed = true; }
+    });
+    refreshAfterTimerEdit(fallbackTab || current);
+    if (changed) toast('顺序已保存');
+  }
+
   /* 每次渲染后绑定本页动态按钮（节点已被替换，不会重复） */
   function bindDynamicEvents() {
     const b = $('#btn-plan-add');
@@ -1329,6 +1490,7 @@
     bindPlanDrag();
     bindKeepDrag();
     bindNoteDrag();
+    bindTimerDrag();
     const mt = $('#memo-text');
     if (mt && MEMOS[current]) {
       const tab = current;
@@ -1340,46 +1502,9 @@
         if (s && !memoState[tab].dirty) s.textContent = memoStamp(tab);
       });
     }
-    /* 倒计时板：改日期 / 去掉标记（就地改正文，不重建输入框，光标不受影响） */
-    const tb = $('#memo-timers');
-    if (tb && MEMOS[current]) {
-      const tab = current;
-      tb.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-action="timer-del"]');
-        if (btn) {
-          applyMemoText(tab, Core.clearLineTimer(memoTextNow(tab), Number(btn.getAttribute('data-line'))));
-          toast('已去掉这条倒计时');
-          return;
-        }
-        const sp = e.target.closest('[data-action="timer-edit"]');
-        if (sp) beginTimerEdit(sp.closest('.timer-row'), tab);
-      });
-      tb.addEventListener('change', (e) => {
-        const cb = e.target.closest('[data-action="timer-toggle"]');
-        if (cb) {
-          toggleTimerDone(cb.closest('.timer-row'), tab, cb.checked);
-          return;
-        }
-        const inp = e.target.closest('[data-action="timer-date"]');
-        if (!inp) return;
-        const due = inp.value;
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) return toast('日期不对');
-        applyMemoText(tab, Core.setLineTimer(memoTextNow(tab), Number(inp.getAttribute('data-line')), due));
-        toast('已改到 ' + due + ' · ' + Core.fmtLeft(Core.dayDiff(today(), due)));
-      });
-    }
-    /* 今日页的倒计时提醒：一样点文字就地改，改完自动落回它所属的那张备忘录 */
-    const tt = $('#today-timers');
-    if (tt) {
-      tt.addEventListener('click', (e) => {
-        const sp = e.target.closest('[data-action="timer-edit"]');
-        if (sp) beginTimerEdit(sp.closest('.timer-row'), null);
-      });
-      tt.addEventListener('change', (e) => {
-        const cb = e.target.closest('[data-action="timer-toggle"]');
-        if (cb) toggleTimerDone(cb.closest('.timer-row'), null, cb.checked);
-      });
-    }
+    /* 倒计时板：琐事 / 创意页与今日页共用一套操作（打勾 / 改字 / 改日期 / ＋进展 / 删 / 拖动） */
+    bindTimerBoard($('#memo-timers'), current);
+    bindTimerBoard($('#today-timers'), null);
     const tAdd = $('#memo-timer-add');
     if (tAdd && MEMOS[current]) {
       const tab = current;

@@ -332,7 +332,8 @@
   const todayWeekday = () => new Date().getDay();
 
   /* ---------- 公司 ---------- */
-  /* 公司页：先按到期日分桶，桶内用 rank 排（拖动写进去的），没排过的按到期日 */
+  /* 公司页：先按到期日分桶，桶内顺序用 Core.workOrderCmp（rank → 到期日 → 创建时间），
+   * 和今日页共用同一个比较器，拖动改完顺序两边一致 */
   function workRows() {
     const d = today();
     const buckets = { today: [], tomorrow: [], later: [], done: [] };
@@ -340,12 +341,8 @@
       const w = Core.workStatus(t, d);
       (buckets[w.bucket] || buckets.later).push({ t, w });
     });
-    const rankOf = (x) => (typeof x.t.rank === 'number' ? x.t.rank : 9e9);
-    const dueOf = (x) => x.t.due || '';
     ['today', 'tomorrow', 'later'].forEach((k) => {
-      buckets[k].sort((a, b) => (rankOf(a) - rankOf(b)) ||
-        (dueOf(a) < dueOf(b) ? -1 : dueOf(a) > dueOf(b) ? 1 : 0) ||
-        (a.t.created < b.t.created ? -1 : 1));
+      buckets[k].sort((a, b) => Core.workOrderCmp(a.t, b.t));
     });
     buckets.done.sort((a, b) => ((a.t.doneDate || '') < (b.t.doneDate || '') ? 1 : -1));
     return { today: buckets.today, tomorrow: buckets.tomorrow, later: buckets.later, done: buckets.done, d };
@@ -857,7 +854,8 @@
       statPill('自律今日', te.habits.length, 's-green') + '</div></div>') +
       todayTimersHTML() +
       section(countIn('公司 · 今日到期', te.work.length),
-        workRowsHtml || emptyLine('今天没有到期的公司条目。', 'work', '去添加'), '', 'acc-blue') +
+        workRowsHtml || emptyLine('今天没有到期的公司条目。', 'work', '去添加'),
+        '<p class="hint tight">顺序跟「公司」页一致：想调先后，去公司页整条拖一下，这里立刻跟着变。</p>', 'acc-blue') +
       section(countIn('计划 · 进行中', plans.length),
         planHtml || emptyLine('还没有进行中的计划方向。', 'plan', '去写一条'), '', planCls) +
       section(countIn('自律 · 今日要勾', te.habits.length),

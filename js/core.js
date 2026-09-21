@@ -625,6 +625,22 @@
       .map((t) => t.id);
   }
 
+  /* 公司条目的统一排序键：拖动写入的 rank → 到期日 → 创建时间。
+   * 公司页与今日页共用这一个比较器，避免两边各算一套顺序（曾经今日页只按逾期排，
+   * 结果在公司页拖完顺序，今日页纹丝不动）。 */
+  function workOrderCmp(a, b) {
+    const ra = a && typeof a.rank === 'number' ? a.rank : Number.MAX_SAFE_INTEGER;
+    const rb = b && typeof b.rank === 'number' ? b.rank : Number.MAX_SAFE_INTEGER;
+    if (ra !== rb) return ra - rb;
+    const da = (a && a.due) || '';
+    const db = (b && b.due) || '';
+    if (da !== db) return da < db ? -1 : 1;
+    const ca = (a && a.created) || '';
+    const cb = (b && b.created) || '';
+    if (ca === cb) return 0;
+    return ca < cb ? -1 : 1;
+  }
+
   /* ---------- 今日聚合（今日首页） ---------- */
   function todayEntries(items, checkins, date) {
     const work = [];
@@ -649,8 +665,8 @@
         }
       }
     });
-    // 逾期自动顺延到今天，红字标记
-    work.sort((a, b) => (a.overdue === b.overdue ? 0 : a.overdue ? -1 : 1));
+    // 顺序跟公司页完全一致（rank → 到期日 → 创建时间）；逾期仍然顺延到今天并标红，但不抢位置
+    work.sort((a, b) => workOrderCmp(a.item, b.item));
     const total = work.length + habits.length + loops.length;
     const done = work.filter((e) => e.done).length + habits.filter((e) => e.done).length +
       loops.filter((e) => e.done).length;
@@ -688,7 +704,7 @@
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, setNoteDone, editNote, noteDone, upsertItem, removeItem,
     setCheckinDate, upsertDevice, applyOp, purgeDoneCandidates, PURGEABLE_KINDS,
     doneIdsFor, checkedOn, weekKey, weeklyDoneOn, dailyScheduledOn, habitOn,
-    workStatus, planState, todayEntries, streakDays
+    workStatus, workOrderCmp, planState, todayEntries, streakDays
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

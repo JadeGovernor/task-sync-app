@@ -84,6 +84,24 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(te2.done, 1);
 }
 
+/* 公司顺序：今日页必须跟公司页用同一把尺子（rank 优先，逾期只标红不抢位） */
+{
+  const late = Object.assign(Core.newItem({ kind: 'work', title: '逾期但排后面' }),
+    { due: '2026-09-07', rank: 2, created: '2026-09-01' });
+  const first = Object.assign(Core.newItem({ kind: 'work', title: '今天且排前面' }),
+    { due: D, rank: 1, created: '2026-09-02' });
+  const te = Core.todayEntries([late, first], [], D);
+  assert.strictEqual(te.work.map((e) => e.item.title).join(','), '今天且排前面,逾期但排后面');
+  assert.strictEqual(te.work[1].overdue, true); // 逾期标记还在，只是不再强制置顶
+  // 都没拖过（没有 rank）时：先到期日，再创建时间
+  const late2 = Object.assign(Core.newItem({ kind: 'work', title: '没 rank 晚' }), { due: D, created: '2026-09-05' });
+  const early2 = Object.assign(Core.newItem({ kind: 'work', title: '没 rank 早' }), { due: D, created: '2026-09-03' });
+  assert.strictEqual(Core.todayEntries([late2, early2], [], D).work.map((x) => x.item.title).join(','), '没 rank 早,没 rank 晚');
+  // 公司页与今日页用的是同一个比较器
+  assert.strictEqual(typeof Core.workOrderCmp, 'function');
+  assert.ok(Core.workOrderCmp(first, late) < 0);
+}
+
 /* 计划：紧急(最后10天) / 正常 / 归档 / 完成 */
 {
   const urgent = Object.assign(Core.newItem({ kind: 'plan', title: '冲刺' }), { rangeStart: '2026-09-01', rangeEnd: '2026-09-10' });

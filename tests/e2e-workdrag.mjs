@@ -100,6 +100,17 @@ const cloudRank=await ev(`(()=>{const f=window.__mock.files()['tasks.json'];
   return f.filter(x=>x.id==='wt1'||x.id==='wt2').map(x=>x.id+':'+(x.rank||0)).join(',')})()`);
 ok('2e 新顺序已写进云端 rank', cloudRank==='wt1:2,wt2:1', cloudRank);
 
+/* --- 2f) 公司页拖完，今日页的公司区块顺序要跟着一起变（两页共用一把尺子） --- */
+await goTab('today');await wait(700);
+const todayWorkOrder=String(await ev(`(()=>{const sec=[...document.querySelectorAll('#view section')].find(x=>{
+  const h=x.querySelector('h3');return h&&h.textContent.indexOf('公司 · 今日到期')===0});
+  return sec?[...sec.querySelectorAll('.task[data-id]')].map(x=>x.dataset.id).join(','):'NO_SECTION'})()`));
+ok('2f 今日页公司顺序跟公司页一致', todayWorkOrder.split(',')[0]==='wt2', todayWorkOrder);
+ok('2g 今日页公司区块出现了顺序口径提示', (await ev(`(()=>{const sec=[...document.querySelectorAll('#view section')].find(x=>{
+  const h=x.querySelector('h3');return h&&h.textContent.indexOf('公司 · 今日到期')===0});
+  return !!sec&&sec.textContent.indexOf('顺序跟「公司」页一致')>0})()`))===true);
+await goTab('work');await wait(700);
+
 /* --- 3) 跨桶拖动：明日甲 拖进 今日桶 → 到期日改成今天 --- */
 const g3=await ev(`(()=>{const src=document.querySelector('#work-board .item-card[data-id="wm1"] .task-title').getBoundingClientRect();
   const head=document.querySelector('#work-board .wb-head[data-bucket="today"]').getBoundingClientRect();
@@ -135,7 +146,11 @@ ok('5c 新建后自动高亮那一行', (await ev(`!!document.querySelector('#wo
 await ev(`(()=>{const f=window.__mock.files()['tasks.json'];
   window.__mock.setRemote('tasks.json', f.filter(x=>x.id==='wd1'));return 1})()`);   // 模拟别台设备拿旧快照整份写回
 await goTab('settings');
-ok('6a 设置页有数据恢复入口', (await ev(`!!document.querySelector('[data-restore]')`))===true,
+/* 快照是下一次心跳（每 5 秒一轮 sync）拉回远端新内容时才写的，所以要等一轮，别死磕瞬间 DOM */
+let hasRestore=(await ev(`!!document.querySelector('[data-restore]')`))===true;
+for(let i=0;i<24&&!hasRestore;i+=1){await wait(500);
+  hasRestore=(await ev(`!!document.querySelector('[data-restore]')`))===true}
+ok('6a 设置页有数据恢复入口', hasRestore===true,
   await ev(`document.querySelector('#view').textContent.slice(0,200)`));
 await ev(`document.querySelector('#set-refresh').click()`);await wait(1500);
 ok('6c 快照列表出现了可恢复的历史版本', (await ev(`document.querySelectorAll('[data-restore]').length`))>=1,

@@ -112,8 +112,28 @@ const D = '2026-09-08'; // 周二
   assert.strictEqual(Core.planState(urgent, D).urgent, true);
   assert.strictEqual(Core.planState(ok10, D).urgent, true);
   assert.strictEqual(Core.planState(normal, D).urgent, false);
-  assert.strictEqual(Core.planState(past, D).bucket, 'archived');
+  // 过了结束日但没完成：不再归档消失，留在板上并顶到最上面
+  assert.strictEqual(Core.planState(past, D).bucket, 'active');
+  assert.strictEqual(Core.planState(past, D).overdue, true);
+  assert.strictEqual(Core.planState(past, D).overdueDays, 3);   // 结束日 09-05 → 今天 09-08
+  assert.strictEqual(Core.planState(past, D).active, true);
+  assert.strictEqual(Core.planState(past, D).urgent, false);
   assert.strictEqual(Core.planState(fin, D).bucket, 'done');
+  assert.strictEqual(Core.planState(fin, D).overdue, false);
+  // 排序：已拖延 → 紧急 → 正常；组内按拖动 rank
+  const wr = (t, r) => Object.assign({}, t, { rank: r });
+  const sorted = [wr(normal, 1), wr(ok10, 2), wr(past, 3), wr(urgent, 4)]
+    .sort((a, b) => Core.planOrderCmp(a, b, D)).map((t) => t.title);
+  assert.deepStrictEqual(sorted, ['已过期', '恰好十天', '冲刺', '远计划']);   // 紧急里 rank 2 在 rank 4 之前
+  const inUrgent = [wr(ok10, 1), wr(urgent, 2)]
+    .sort((a, b) => Core.planOrderCmp(a, b, D)).map((t) => t.title);
+  assert.deepStrictEqual(inUrgent, ['恰好十天', '冲刺']);
+  // 已拖延组内也按 rank（不是按拖了多久）
+  const twoLate = [
+    wr(Object.assign({}, past, { title: '晚的', rank: 9 }), 9),
+    wr(Object.assign({}, past, { title: '早的', rangeEnd: '2026-08-01', rank: 2 }), 2)
+  ].sort((a, b) => Core.planOrderCmp(a, b, D)).map((t) => t.title);
+  assert.deepStrictEqual(twoLate, ['早的', '晚的']);
 }
 
 /* 连续达标（每日习惯；空列表不死循环；破卡即停） */

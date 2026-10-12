@@ -652,3 +652,6 @@ input.timer-date { width: auto; max-width: 150px; padding: 4px 6px; font-size: 1
   input.timer-date { max-width: 100%; }
   .timer-subs, .timer-sub-add-form { margin-left: 20px; }
 }
+
+/* 计划「已拖延」：比「紧急」更重的一档，实心红 chip（2026-10 加） */
+.chip.over { background: #b91c1c; color: #fff; font-weight: 600; }

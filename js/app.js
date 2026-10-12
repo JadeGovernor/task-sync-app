@@ -415,22 +415,14 @@
   /* ---------- 计划排序 ---------- */
   function planOrdered() {
     const d = today();
-    const acts = [], done = [], arch = [];
+    const acts = [], done = [];
     itemOfKind('plan').forEach((t) => {
       const st = Core.planState(t, d);
       if (st.bucket === 'done') done.push({ item: t, st });
-      else if (st.bucket === 'archived') arch.push({ item: t, st });
-      else acts.push({ item: t, st });
+      else acts.push({ item: t, st });          // 过了结束日但没完成的也在板上（标「已拖延」），不再消失
     });
-    const cmp = (a, b) => {
-      if (a.st.urgent !== b.st.urgent) return a.st.urgent ? -1 : 1;
-      const ra = a.item.rank != null ? a.item.rank : Infinity;
-      const rb = b.item.rank != null ? b.item.rank : Infinity;
-      if (ra !== rb) return ra - rb;
-      return a.item.created < b.item.created ? -1 : 1;
-    };
-    acts.sort(cmp);
-    return { active: acts, done: done.sort((a, b) => (a.item.doneDate || '') > (b.item.doneDate || '') ? -1 : 1), archived: arch };
+    acts.sort((a, b) => Core.planOrderCmp(a.item, b.item, d));
+    return { active: acts, done: done.sort((a, b) => (a.item.doneDate || '') > (b.item.doneDate || '') ? -1 : 1) };
   }
   function planCard(e, compact, badge, minimal) {
     const t = e.item, st = e.st;
@@ -440,15 +432,17 @@
     if (t.rangeStart || t.rangeEnd) {
       chips.push({ text: (t.rangeStart || '?') + ' → ' + (t.rangeEnd || '持续'), cls: 'dim' });
     }
-    if (st.urgent) chips.push({ text: '紧急 · 最后 ' + Math.max(0, Core.dayDiff(today(), t.rangeEnd)) + ' 天', cls: 'warn' });
+    if (st.overdue) chips.push({ text: '已拖延 ' + st.overdueDays + ' 天未完成', cls: 'over' });
+    else if (st.urgent) chips.push({ text: '紧急 · 最后 ' + Math.max(0, Core.dayDiff(today(), t.rangeEnd)) + ' 天', cls: 'warn' });
+    if (st.overdue) chips.push({ text: '打勾完成 或 改结束日 才会收起', cls: 'dim' });
     if (t.rangeEnd && t.rangeEnd === today() && !st.urgent && st.active) chips.push({ text: '今天截止', cls: 'dim' });
     const doneBtn = st.bucket !== 'done'
       ? '<button class="mini-btn ok-mini" type="button" data-action="plan-done" data-id="' + t.id + '">完成</button>'
       : '<button class="mini-btn" type="button" data-action="plan-done" data-id="' + t.id + '">恢复</button>';
     return cardHTML(t, {
-      check: false, chips, extraActions: doneBtn, hot: !compact && st.urgent,
+      check: false, chips, extraActions: doneBtn, hot: !compact && (st.urgent || st.overdue),
       notesZone: !compact && !isMini, compact: !!compact, minimal: isMini,
-      badge: badge != null ? badge : null, badgeCls: st.urgent ? 'is-urgent' : ''
+      badge: badge != null ? badge : null, badgeCls: (st.urgent || st.overdue) ? 'is-urgent' : ''
     });
   }
   function nextRank(kind) {
@@ -817,9 +811,10 @@
       const t = e.item;
       const chips = [{ text: '计划', cls: 'm-plan' }];
       if (t.rangeStart || t.rangeEnd) chips.push({ text: (t.rangeStart || '?') + ' → ' + (t.rangeEnd || '持续'), cls: 'dim' });
-      if (e.st.urgent) chips.push({ text: '紧急 · 剩 ' + Math.max(0, Core.dayDiff(d, t.rangeEnd)) + ' 天', cls: 'warn' });
+      if (e.st.overdue) chips.push({ text: '已拖延 ' + e.st.overdueDays + ' 天未完成', cls: 'over' });
+      else if (e.st.urgent) chips.push({ text: '紧急 · 剩 ' + Math.max(0, Core.dayDiff(d, t.rangeEnd)) + ' 天', cls: 'warn' });
       /* 可以直接打勾：勾上等于「完成归档」，和计划页的「完成」按钮同一套逻辑（可恢复） */
-      return cardHTML(t, { check: true, checkAction: 'plan-done', done: false, date: d, chips, notesList: true, hot: e.st.urgent });
+      return cardHTML(t, { check: true, checkAction: 'plan-done', done: false, date: d, chips, notesList: true, hot: e.st.urgent || e.st.overdue });
     };
     const planHtml = planTop.map(planRowToday).join('') +
       (plans.length > planTop.length
@@ -897,14 +892,18 @@
   function renderPlan() {
     const g = planOrdered();
     const urg = g.active.filter((e) => e.st.urgent).length;
+    const over = g.active.filter((e) => e.st.overdue).length;
     const cards = g.active.map((e, i) => planCard(e, false, i + 1)).join('') ||
       emptyBox('还没有进行中的方向：在下方写一条，会自动出现在这里。');
 
-    let html = '<section class="card plan-board-card' + (urg ? ' has-urgent' : '') + '">' +
+    let html = '<section class="card plan-board-card' + ((urg || over) ? ' has-urgent' : '') + '">' +
       '<h3>优先级排序 · 整条可拖动' +
+      (over ? ' <span class="urgent-note">' + over + ' 条已拖延</span>' : '') +
       (urg ? ' <span class="urgent-note">' + urg + ' 条紧急</span>' : '') +
       ' <span class="cnt">' + g.active.length + ' 条</span></h3>' +
-      '<p class="hint tight">拖动任意位置即可改顺序；结束日最后 10 天会自动置顶到「紧急」。</p>' +
+      '<p class="hint tight">拖动任意位置即可改顺序，但只在同一档里生效：' +
+      '「已拖延」（过了结束日还没完成）永远在最上面，其次是「紧急」（结束日最后 10 天），再是正常；' +
+      '硬规则挡住你拖动时会弹提示说明原因。想收起已拖延那条：打勾完成，或改结束日。</p>' +
       '<div class="plan-board" id="plan-board">' + cards + '</div></section>';
 
     html += '<section class="card plan-new-card"><h3>写计划方向</h3>' +
@@ -915,7 +914,6 @@
       '<div class="actions-row"><button class="btn btn-primary" id="btn-plan-add" type="button">＋ 添加方向</button>' +
       '<span class="hint">目前 ' + g.active.length + ' 条进行中</span></div></section>';
 
-    if (g.archived.length) html += section('已结束 · ' + g.archived.length + ' 条（改结束日期可恢复）', g.archived.map((e) => planCard(e, true)).join(''), '', 'acc-slate');
     if (g.done.length) html += doneSection('plan', g.done.map((e) => ({
       date: e.item.doneDate || '',
       html: planCard(e, false, null, true)
@@ -1463,6 +1461,37 @@
   }
 
   /* ---------- 计划拖拽 ---------- */
+  /* 硬规则（已拖延 / 紧急 必须在上）挡住拖动时，别让用户白拖：先说清楚为什么。
+   * 做法是拿新 rank「预演」一遍真实排序，和用户拖出来的顺序一比，不一致就是被规则顶回去了。 */
+  function planDragNote(ids) {
+    const d = today();
+    const list = ids.map((id, i) => {
+      const t = byId(id);
+      if (!t || t.kind !== 'plan') return null;
+      const st = Core.planState(t, d);
+      return { id, item: Object.assign({}, t, { rank: i + 1 }), st, top: !!(st.overdue || st.urgent) };
+    }).filter(Boolean);
+    const want = list.map((x) => x.id);
+    const eff = list.slice().sort((a, b) => Core.planOrderCmp(a.item, b.item, d)).map((x) => x.id);
+    if (eff.join(',') === want.join(',')) return '';
+    const at = (id) => want.indexOf(id);
+    /* ① 想把某条排到「已拖延 / 紧急」上面 → 直接点名那条规则条目 */
+    const blocked = list.find((x) => {
+      const i = at(x.id);
+      return x.top && i > 0 && want.slice(0, i).some((id2) => {
+        const y = list.find((z) => z.id === id2);
+        return y && !y.top;
+      });
+    });
+    if (blocked) {
+      const why = blocked.st.overdue
+        ? '已拖延 ' + blocked.st.overdueDays + ' 天未完成'
+        : '已进入「紧急」（结束日最后 10 天）';
+      return '「' + blocked.item.title + '」' + why + '，固定在排序板最上面，不能排到它上面 · 只在同一档里拖动才有效';
+    }
+    /* ② 想在「已拖延」和「紧急」之间互换 → 说清这两档的先后 */
+    return '「已拖延」永远压在「紧急」上面（两档都固定在排序板最上面），不能互换 · 同一档里拖动才有效';
+  }
   function bindPlanDrag() {
     const board = $('#plan-board');
     if (!board) return;
@@ -1473,7 +1502,7 @@
         const ranks = {};
         ids.forEach((id, i) => { ranks[id] = i + 1; });
         store.setRanks(ranks);
-        toast('顺序已保存');
+        toast(planDragNote(ids) || '顺序已保存', 4200);
       }
     });
   }

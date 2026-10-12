@@ -601,17 +601,40 @@
   /* ---------- 计划：紧急 / 归档 / 排序 ---------- */
   function planState(item, date) {
     if (item.kind !== 'plan') return null;
-    if (item.done) return { bucket: 'done', urgent: false, doneDate: item.doneDate || null };
+    if (item.done) {
+      return { bucket: 'done', active: false, urgent: false, overdue: false, overdueDays: 0, left: null, doneDate: item.doneDate || null };
+    }
     const end = item.rangeEnd;
     const started = !item.rangeStart || item.rangeStart <= date;
-    const past = !!end && end < date;                    // 时间范围已过 → 归档
-    const active = started && !past;
-    let urgent = false;
-    if (active && end) {
-      const left = dayDiff(date, end);                   // 剩余天数
-      urgent = left >= 0 && left <= 10;
-    }
-    return { bucket: past ? 'archived' : 'active', active, urgent, rangeEnd: end || null };
+    const left = end ? dayDiff(date, end) : null;        // 剩余天数（负数＝已经过了结束日）
+    /* 过了结束日但还没完成：不再「归档消失」，留在板上顶到最上面，标「已拖延 N 天未完成」 */
+    const overdue = left != null && left < 0;
+    const urgent = left != null && !overdue && started && left <= 10;
+    return {
+      bucket: 'active',
+      active: started || overdue,
+      urgent, overdue,
+      overdueDays: overdue ? -left : 0,
+      left,
+      rangeEnd: end || null
+    };
+  }
+
+  /* 计划条目的统一排序键：已拖延 → 紧急（最后 10 天）→ 正常，组内按拖出来的 rank。
+   * 计划页与今日页共用它；计划页拖动时还会用它「预演」一遍，冲突就告诉用户为什么排不上去。 */
+  function planOrderCmp(a, b, date) {
+    const sa = planState(a, date) || {};
+    const sb = planState(b, date) || {};
+    const zone = (s) => (s.overdue ? 0 : s.urgent ? 1 : 2);
+    const za = zone(sa), zb = zone(sb);
+    if (za !== zb) return za - zb;
+    const ra = a && a.rank != null ? a.rank : Infinity;
+    const rb = b && b.rank != null ? b.rank : Infinity;
+    if (ra !== rb) return ra - rb;
+    const ca = (a && a.created) || '';
+    const cb = (b && b.created) || '';
+    if (ca === cb) return 0;
+    return ca < cb ? -1 : 1;
   }
 
   /* ---------- 清理已完成 ---------- */
@@ -704,7 +727,7 @@
     fileDefault, addNote, fmtNoteTime, orderedNotes, deleteNote, setNoteOrder, setNoteDone, editNote, noteDone, upsertItem, removeItem,
     setCheckinDate, upsertDevice, applyOp, purgeDoneCandidates, PURGEABLE_KINDS,
     doneIdsFor, checkedOn, weekKey, weeklyDoneOn, dailyScheduledOn, habitOn,
-    workStatus, workOrderCmp, planState, todayEntries, streakDays
+    workStatus, workOrderCmp, planState, planOrderCmp, todayEntries, streakDays
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

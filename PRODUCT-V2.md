@@ -48,7 +48,15 @@
 - 每周习惯：自然周（周一起）内任意一天勾一次算完成，显示本周已勾；周一自动重置。
 - 生活类自律（作息/运动/阅读等）都放这里。
 
-### 3.5 效率（第二期，本期只留入口占位）
+### 3.5 本月排期
+- 位置：顶部导航「习惯」之后、「琐事」之前。
+- 顶部月历：完整展示本月，标出 ISO 周序号和今天；今天用深色圆点 +「今」标出，不提供交互。
+- 四个周段：默认按本月天数均分为 4 段；每段在日历上用不同底色高亮，并配图例。
+- 每段带一个小铅笔，可改开始/结束日；范围限制在本月内、顺序正确、互不重叠。
+- 每段右侧是可自由编辑的多行文本，停手约 1 秒自动保存并三端同步。
+- 存储：一周一条 `kind: monthweek` 记录，避免多端同时编辑不同周时互相覆盖。
+
+### 3.6 效率（第二期，本期只留入口占位）
 - 早起：设置时间（默认 06:30）+ 关联 B 站链接；Mac 上 `scripts/download_bilibili.sh` 下载转 mp3 → 导入 Apple Music（同一 Apple ID 自动同步到 iPhone）→ iPhone「时钟」闹钟用该音频当铃声。
 - 早睡：设置时间（默认 22:30）；到点系统提醒，可选快捷指令调暗亮度，营造褪黑素氛围；睡前播英语播客（Apple Podcasts）。
 - 本期范围：设置页保留早起/早睡时间与开关（沿用 V1 settings），音频集成第二期做。
@@ -58,10 +66,11 @@
 沿用 GitHub 私有仓库 3 个 JSON 的思路，文件内容按新结构重建：
 
 - `tasks.json` → 大条目数组，每项字段：
-  - 通用：`id`、`kind`(`work`|`plan`|`habit`)、`title`、`created`、`updatedAt`
+  - 通用：`id`、`kind`(`work`|`plan`|`habit`|`keep`|`memo`|`idea`|`loop`|`monthweek`)、`title`、`created`、`updatedAt`
   - 公司：`due`(YYYY-MM-DD)、`done`、`doneDate`
   - 计划：`rangeStart`、`rangeEnd`、`rank`(拖拽排序值)
   - 自律：`freq`(`daily`|`weekly`)、（每周习惯的完成按周记录）
+  - 本月排期：`month`(YYYY-MM)、`week`(0-3)、`start`、`end`、`text`
   - 备注流水：`notes: [{date, text}]`（三类大条目通用）
 - `checkins.json` → 按日期打卡（公司一次性 + 每日习惯）+ 每周习惯完成记录（周 key）。
 - `settings.json` → 每设备闹钟/名称等（沿用 V1 结构）。

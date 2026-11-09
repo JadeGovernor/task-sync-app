@@ -1,4 +1,5 @@
-/* V2 UI 层：今日聚合 + 公司(今日/明日) + 计划(排序/紧急) + 自律(每日/每周) + 习惯清单 + 琐事备忘录 + 效率(二期占位) + 设置 */
+/* V2 UI 层：今日聚合 + 公司(今日/明日) + 计划(排序/紧急) + 自律(每日/每周) + 习惯清单 +
+ * 本月排期 + 琐事/创意备忘录 + 效率(二期占位) + 设置 */
 (function () {
   'use strict';
   const Core = window.Core;
@@ -42,6 +43,12 @@
     memoState[k] = { timer: null, dirty: false, flushing: false, draft: null };
   });
   const anyMemoFlushing = () => Object.keys(memoState).some((k) => memoState[k].flushing);
+
+  /* 本月排期：一周一条记录（kind=monthweek），四条周范围和正文都跟着 tasks.json 三端同步。
+   * 拆成四条是为了避免「两台设备各改一周」时整条记录互相覆盖。 */
+  const MONTH_KIND = 'monthweek';
+  const WEEK_NAMES = ['第一周', '第二周', '第三周', '第四周'];
+  let monthState = { key: null, drafts: {}, timer: null, dirty: false, flushing: false, rangeEdit: null };
 
   /* 顶栏状态文案：同步成功时带上时刻，方便确认「实时同步」真的在跑 */
   function statusText() {
@@ -484,6 +491,222 @@
       '<button class="btn btn-primary" type="submit">＋ 记下</button></form>' +
       '<p class="hint">同一个习惯不用重复记，它一直留在这里。</p></section>';
     return html;
+  }
+
+  /* ---------- 本月排期：一张不交互的月历 + 四行可编辑的周排期 ---------- */
+  const p2 = (n) => (n < 10 ? '0' + n : String(n));
+  function monthMeta() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const days = new Date(y, m + 1, 0).getDate();
+    const key = y + '-' + p2(m + 1);
+    return {
+      y, m, days, key,
+      first: key + '-01',
+      last: key + '-' + p2(days),
+      label: y + ' 年 ' + (m + 1) + ' 月'
+    };
+  }
+  const shortDay = (s) => {
+    const p = String(s || '').split('-');
+    return p.length === 3 ? Number(p[1]) + '.' + Number(p[2]) : '';
+  };
+  const rangeLabel = (w) => shortDay(w.start) + ' – ' + shortDay(w.end);
+  const defaultMonthWeeks = (meta) => {
+    const base = Math.floor(meta.days / 4);
+    const rem = meta.days % 4;
+    let day = 1;
+    return WEEK_NAMES.map((_, i) => {
+      const len = base + (i < rem ? 1 : 0);
+      const start = meta.key + '-' + p2(day);
+      const end = meta.key + '-' + p2(day + len - 1);
+      day += len;
+      return { start, end, text: '' };
+    });
+  };
+  const monthItem = (i) => {
+    const key = monthMeta().key;
+    return items().find((t) => t.kind === MONTH_KIND && t.month === key && t.week === i) || null;
+  };
+  function monthWeeks() {
+    const meta = monthMeta();
+    const def = defaultMonthWeeks(meta);
+    return def.map((d, i) => {
+      const w = monthItem(i) || {};
+      const good = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+      return {
+        start: good(w.start) ? w.start : d.start,
+        end: good(w.end) ? w.end : d.end,
+        text: typeof w.text === 'string' ? w.text : ''
+      };
+    });
+  }
+  function saveMonthWeek(i, patch) {
+    const meta = monthMeta();
+    const def = defaultMonthWeeks(meta)[i];
+    const old = monthItem(i);
+    const base = old || Core.newItem({
+      kind: MONTH_KIND,
+      title: meta.label + WEEK_NAMES[i],
+      month: meta.key,
+      week: i,
+      start: def.start,
+      end: def.end,
+      text: ''
+    });
+    store.saveTask(Object.assign({}, base, patch, {
+      kind: MONTH_KIND,
+      month: meta.key,
+      week: i,
+      updatedAt: new Date().toISOString()
+    }));
+  }
+  function flushMonth() {
+    if (!monthState.dirty) return;
+    const meta = monthMeta();
+    if (monthState.key !== meta.key) { monthState.drafts = {}; monthState.dirty = false; return; }
+    const weeks = monthWeeks();
+    const changes = Object.keys(monthState.drafts)
+      .map(Number)
+      .filter((i) => i >= 0 && i < 4)
+      .map((i) => ({ i, text: monthState.drafts[i], prev: weeks[i].text }));
+    monthState.dirty = false;
+    monthState.drafts = {};
+    monthState.flushing = true;
+    try {
+      changes.forEach((c) => {
+        if (c.text !== c.prev) saveMonthWeek(c.i, { text: c.text });
+      });
+    } finally { monthState.flushing = false; }
+  }
+  function monthOnInput(ta) {
+    const i = Number(ta.getAttribute('data-ms-week'));
+    if (!(i >= 0 && i < 4)) return;
+    monthState.key = monthMeta().key;
+    monthState.drafts[i] = ta.value;
+    monthState.dirty = true;
+    if (monthState.timer) clearTimeout(monthState.timer);
+    monthState.timer = setTimeout(() => {
+      monthState.timer = null;
+      flushMonth();
+    }, 700);
+  }
+  function monthRangeError(i, start, end) {
+    const meta = monthMeta();
+    if (!start || !end) return '开始和结束日期都要选';
+    if (start < meta.first || end > meta.last) return '范围要落在 ' + meta.label + ' 内';
+    if (start > end) return '开始日期不能晚于结束日期';
+    const weeks = monthWeeks();
+    if (i > 0 && start <= weeks[i - 1].end) return '开始日要晚于「' + WEEK_NAMES[i - 1] + '」的结束日';
+    if (i < 3 && end >= weeks[i + 1].start) return '结束日要早于「' + WEEK_NAMES[i + 1] + '」的开始日';
+    return '';
+  }
+  function saveMonthRange(i) {
+    const start = (document.getElementById('ms-start-' + i) || {}).value;
+    const end = (document.getElementById('ms-end-' + i) || {}).value;
+    const err = monthRangeError(i, start, end);
+    if (err) { toast(err, 3200); return; }
+    flushMonth();                     // 别把这次操作前还没落盘的正文丢掉
+    monthState.drafts = {};
+    monthState.dirty = false;
+    monthState.rangeEdit = null;
+    saveMonthWeek(i, { start, end });
+    toast(WEEK_NAMES[i] + '范围已保存：' + shortDay(start) + ' – ' + shortDay(end));
+  }
+  /* ISO 周序号：跨年也按 ISO 8601 算 */
+  function isoWeekNo(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const day = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - day);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  }
+  function calendarHTML(weeks) {
+    const meta = monthMeta();
+    const d = new Date();
+    const todayS = today();
+    const first = new Date(meta.y, meta.m, 1);
+    const offset = (first.getDay() + 6) % 7;        // 周一开头
+    const rows = Math.ceil((offset + meta.days) / 7);
+    const wd = ['一', '二', '三', '四', '五', '六', '日'];
+    let g = '<div class="mc-grid">' +
+      '<div class="mc-corner">周</div>' +
+      wd.map((x, i) => '<div class="mc-wd' + (i >= 5 ? ' wkend' : '') + '">' + x + '</div>').join('');
+    for (let r = 0; r < rows; r += 1) {
+      const rowStart = new Date(meta.y, meta.m, 1 - offset + r * 7);
+      g += '<div class="mc-wn" title="ISO 第 ' + isoWeekNo(rowStart) + ' 周">' + isoWeekNo(rowStart) + '</div>';
+      for (let c = 0; c < 7; c += 1) {
+        const dt = new Date(rowStart);
+        dt.setDate(rowStart.getDate() + c);
+        const ds = Core.dateStr(dt);
+        const inMonth = dt.getMonth() === meta.m;
+        const wi = inMonth ? weeks.findIndex((w) => ds >= w.start && ds <= w.end) : -1;
+        const cls = ['mc-day'];
+        if (!inMonth) cls.push('out');
+        else if (wi >= 0) cls.push('wk' + (wi + 1));
+        if (c >= 5) cls.push('wkend');
+        if (ds === todayS) cls.push('today');
+        g += '<div class="' + cls.join(' ') + '"' + (inMonth ? '' : ' aria-hidden="true"') + '>' +
+          '<b>' + dt.getDate() + '</b>' + (ds === todayS ? '<i class="mc-today">今</i>' : '') + '</div>';
+      }
+    }
+    g += '</div>';
+    const todayBlock = weeks.findIndex((w) => todayS >= w.start && todayS <= w.end);
+    return '<div class="mc-top">' +
+        '<div><div class="mc-month">' + meta.label + '</div>' +
+        '<div class="mc-sub">今天 ' + Core.fmtCN(todayS) + ' · ISO 第 ' + isoWeekNo(d) + ' 周' +
+        (todayBlock >= 0 ? ' · 本月' + WEEK_NAMES[todayBlock] : '') + '</div></div>' +
+        (todayBlock >= 0 ? '<span class="mc-now-badge">今天在' + WEEK_NAMES[todayBlock] + '</span>' : '') +
+      '</div>' +
+      g +
+      '<div class="mc-legend">' +
+        weeks.map((w, i) => '<span class="mc-lg"><i class="lg lg' + (i + 1) + '"></i>' +
+          WEEK_NAMES[i] + ' ' + rangeLabel(w) + '</span>').join('') +
+        '<span class="mc-lg"><i class="lg lg-today"></i>今天</span>' +
+      '</div>';
+  }
+  function renderMonth() {
+    const meta = monthMeta();
+    const weeks = monthWeeks();
+    const todayS = today();
+    const rows = weeks.map((w, i) => {
+      const isNow = todayS >= w.start && todayS <= w.end;
+      const text = monthState.drafts[i] != null ? monthState.drafts[i] : w.text;
+      const days = Math.max(0, Core.dayDiff(w.start, w.end) + 1);
+      const row = '<div class="ms-row ms-wk' + (i + 1) + (isNow ? ' is-now' : '') + '" data-ms-row="' + i + '">' +
+          '<div class="ms-side">' +
+            '<div class="ms-name">' + WEEK_NAMES[i] +
+              '<button class="ms-pencil" type="button" data-action="month-range-edit" data-week="' + i + '" title="修改本周范围">✎</button>' +
+            '</div>' +
+            '<div class="ms-range">' + rangeLabel(w) + '</div>' +
+            '<div class="ms-meta">' + days + ' 天' + (isNow ? '<span class="ms-now">本周</span>' : '') + '</div>' +
+          '</div>' +
+          '<div class="ms-body"><textarea class="ms-text" data-ms-week="' + i + '" rows="2" ' +
+            'spellcheck="false" placeholder="这周要安排的事，随便写…">' + esc(text) + '</textarea></div>' +
+        '</div>';
+      if (monthState.rangeEdit !== i) return row;
+      return row +
+        '<div class="ms-range-editor" data-ms-editor="' + i + '">' +
+          '<label><span>' + WEEK_NAMES[i] + '开始</span>' +
+            '<input type="date" id="ms-start-' + i + '" value="' + esc(w.start) + '" min="' + meta.first + '" max="' + meta.last + '" /></label>' +
+          '<label><span>结束</span>' +
+            '<input type="date" id="ms-end-' + i + '" value="' + esc(w.end) + '" min="' + meta.first + '" max="' + meta.last + '" /></label>' +
+          '<div class="ms-editor-actions">' +
+            '<button class="btn btn-sm btn-primary" type="button" data-action="month-range-save" data-week="' + i + '">保存范围</button>' +
+            '<button class="btn btn-sm" type="button" data-action="month-range-cancel">取消</button>' +
+          '</div>' +
+        '</div>';
+    }).join('');
+    return '<section class="card month-cal-card">' +
+        '<h3>本月日历 <span class="cnt">' + meta.days + ' 天</span></h3>' +
+        calendarHTML(weeks) +
+      '</section>' +
+      '<section class="card month-sched-card">' +
+        '<h3>本月排期 <span class="cnt">四周</span></h3>' +
+        '<p class="hint tight">点周次后面的 ✎ 可以改这一周的范围，日历上的色块会跟着变；右边每行随便写，停手约 1 秒自动保存并同步三端。</p>' +
+        '<div class="ms-table">' + rows + '</div>' +
+      '</section>';
   }
 
   /* ---------- 备忘录（琐事 / 创意）：一整张纸，随便写、随时改 ---------- */
@@ -1041,6 +1264,7 @@
   function render() {
     if (sortActive > 0) { pendingRender = true; return; }   // 拖动中重建 DOM 会把手上那张卡片变成孤儿
     pendingRender = false;
+    if (monthState.flushing) return;              // 排期正在落盘，别把输入框重建掉
     if (anyMemoFlushing()) return;               // 备忘录正在落盘，别把输入框重建掉
     if (MEMOS[current]) {
       const st = memoState[current];
@@ -1056,6 +1280,15 @@
         flushMemo(current);
       }
     }
+    if (current === 'month') {
+      const ae = document.activeElement;
+      if (ae && ae.classList && ae.classList.contains('ms-text')) {
+        flushMonth();                            // 先把正在敲的字存下来
+        $('#subline').textContent = statusText(); // 内容没变：只更新顶栏，保住光标
+        return;
+      }
+      if (monthState.dirty) flushMonth();
+    }
     $('#subline').textContent = statusText();
     const d = today();
     const te = Core.todayEntries(items(), checkins(), d);
@@ -1066,6 +1299,7 @@
       ['plan', '计划', activePlans().length],
       ['disc', '自律', habitsAction()],
       ['keep', '习惯', itemOfKind('keep').length],
+      ['month', '排期', 0],
       ['memo', '琐事', 0],
       ['idea', '创意', 0],
       ['eff', '效率', 0],
@@ -1073,13 +1307,14 @@
     ];
     $('#tabs').innerHTML = labels.map((l) => tabBtn(l[0], l[1], l[2], '')).join('');
     $('#btn-new').textContent = '＋ 新建';
-    $('#btn-new').classList.toggle('hidden', !!MEMOS[current]);   // 备忘录就地写，不需要「新建」
+    $('#btn-new').classList.toggle('hidden', !!MEMOS[current] || current === 'month'); // 备忘录/排期就地写
     const view = $('#view');
     if (current === 'today') view.innerHTML = renderToday();
     else if (current === 'work') view.innerHTML = renderWork();
     else if (current === 'plan') view.innerHTML = renderPlan();
     else if (current === 'disc') view.innerHTML = renderDisc();
     else if (current === 'keep') view.innerHTML = renderKeep();
+    else if (current === 'month') view.innerHTML = renderMonth();
     else if (MEMOS[current]) view.innerHTML = renderMemo(current);
     else if (current === 'eff') view.innerHTML = renderEff();
     else view.innerHTML = renderSettings();
@@ -1742,6 +1977,15 @@
         if (s && !memoState[tab].dirty) s.textContent = memoStamp(tab);
       });
     }
+    const autoGrow = (el) => {
+      el.style.height = 'auto';
+      el.style.height = Math.max(56, el.scrollHeight) + 'px';
+    };
+    document.querySelectorAll('.ms-text').forEach((ta) => {
+      autoGrow(ta);
+      ta.addEventListener('input', () => { monthOnInput(ta); autoGrow(ta); });
+      ta.addEventListener('blur', () => { flushMonth(); autoGrow(ta); });
+    });
     /* 倒计时板：琐事 / 创意页与今日页共用一套操作（打勾 / 改字 / 改日期 / ＋进展 / 删 / 拖动） */
     bindTimerBoard($('#memo-timers'), current);
     bindTimerBoard($('#today-timers'), null);
@@ -1825,9 +2069,9 @@
   /* ---------- 全局事件（一次绑定） ---------- */
   function onViewClick(e) {
     const tabEl = e.target.closest('.tab[data-tab]');   // 只有顶部 tab 条才切页；别把内容里的 data-* 当切页指令
-    if (tabEl) { flushMemo(); current = tabEl.dataset.tab; render(); return; }
+    if (tabEl) { flushMemo(); flushMonth(); current = tabEl.dataset.tab; render(); return; }
     const go = e.target.closest('[data-tab-go]');
-    if (go) { flushMemo(); current = go.dataset.tabGo; render(); return; }
+    if (go) { flushMemo(); flushMonth(); current = go.dataset.tabGo; render(); return; }
     const noteText = e.target.closest('.note-text');
     if (noteText && !e.target.closest('[data-action]')) { startNoteEdit(noteText); return; }
     const act = e.target.closest('[data-action]');
@@ -1880,6 +2124,21 @@
         const was = !!item.done;
         store.saveTask(Object.assign({}, item, { done: !was, doneDate: was ? null : d, updatedAt: new Date().toISOString() }));
         toast(was ? '已恢复为进行中' : '已完成，归档');
+        return;
+      }
+      if (action === 'month-range-edit') {
+        flushMonth();
+        monthState.rangeEdit = Number(act.dataset.week);
+        render();
+        return;
+      }
+      if (action === 'month-range-cancel') {
+        monthState.rangeEdit = null;
+        render();
+        return;
+      }
+      if (action === 'month-range-save') {
+        saveMonthRange(Number(act.dataset.week));
         return;
       }
     }
@@ -1981,9 +2240,23 @@
   store.onChange = () => render();
   /* 切走 / 息屏 / 关页面之前，把备忘录里没落盘的字存下来 */
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') flushMemo();
+    if (document.visibilityState === 'hidden') { flushMemo(); flushMonth(); }
   });
-  window.addEventListener('pagehide', flushMemo);
+  /* 跨零点 / 回到前台时，让日历上的「今天」和月份自己走到新的一天 */
+  let monthDayStamp = today();
+  const refreshMonthIfDayChanged = () => {
+    if (today() === monthDayStamp) return;
+    monthDayStamp = today();
+    if (current !== 'month') return;
+    flushMonth();
+    monthState.rangeEdit = null;
+    render();
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshMonthIfDayChanged();
+  });
+  setInterval(refreshMonthIfDayChanged, 60000);
+  window.addEventListener('pagehide', () => { flushMemo(); flushMonth(); });
   render();
   store.init();
   if ('serviceWorker' in navigator) {

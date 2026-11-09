@@ -468,21 +468,72 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 .memo-card.memo-idea { border-left-color: #8b5cf6; }
 .memo-card.memo-idea h3 { color: #6d28d9; }
 
-.memo-text {
-  display: block; width: 100%; box-sizing: border-box;
-  min-height: 46vh; resize: vertical; overflow-y: auto;
+.memo-editor-shell {
   border: 1px solid var(--line); border-radius: 12px;
-  padding: 13px 14px; background: #f8fafc; color: var(--ink);
-  font-size: 15px; line-height: 1.75; font-family: inherit;
-  -webkit-appearance: none; appearance: none;
+  background: #fff; overflow: hidden;
 }
-.memo-text::placeholder { color: #94a3b8; }
-.memo-text:focus { outline: 2px solid #7dd3fc; outline-offset: -1px; background: #fff; }
+.memo-editor-shell:focus-within {
+  border-color: #7dd3fc;
+  box-shadow: 0 0 0 2px rgba(125, 211, 252, .28);
+}
+.memo-toolbar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+  padding: 7px 8px; background: #f8fafc; border-bottom: 1px solid var(--line);
+}
+.memo-tool, .memo-select {
+  height: 28px; padding: 0 8px; border: 1px solid #e2e8f0; border-radius: 7px;
+  background: #fff; color: #475569; font-family: inherit; font-size: 12px;
+  line-height: 1; cursor: pointer; white-space: nowrap;
+}
+.memo-tool:hover, .memo-select:hover { border-color: #cbd5e1; background: #f8fafc; }
+.memo-tool:active { background: #eef2ff; }
+.memo-tool:focus-visible, .memo-select:focus-visible { outline: 2px solid #bae6fd; outline-offset: 1px; }
+.memo-bold { width: 30px; padding: 0; font-size: 14px; }
+.memo-bold b { font-weight: 800; }
+.memo-select { max-width: 78px; padding-right: 3px; }
+.memo-sep { width: 1px; height: 18px; margin: 0 2px; background: #e2e8f0; flex: none; }
+.memo-editor {
+  display: block; min-height: 46vh; padding: 13px 14px; outline: none;
+  background: #fff; color: var(--ink); font-size: 15px; line-height: 1.75;
+  font-family: inherit; overflow-wrap: anywhere;
+}
+.memo-editor.is-empty:before {
+  content: attr(data-placeholder); color: #94a3b8; pointer-events: none;
+}
+.memo-editor p, .memo-editor div { margin: 0; }
+.memo-editor h2 {
+  margin: .6em 0 .3em; font-size: 21px; line-height: 1.35;
+  font-weight: 700; color: #0f172a;
+}
+.memo-editor h3 {
+  margin: .55em 0 .25em; font-size: 17px; line-height: 1.4;
+  font-weight: 650; color: #1e293b;
+}
+.memo-editor h2:first-child, .memo-editor h3:first-child { margin-top: 0; }
+.memo-editor ul, .memo-editor ol { margin: .35em 0 .65em; padding-left: 1.4em; }
+.memo-editor blockquote {
+  margin: .5em 0; padding-left: 10px; border-left: 3px solid #cbd5e1; color: #475569;
+}
+.memo-editor table {
+  width: 100%; margin: 8px 0 12px; border-collapse: collapse;
+  table-layout: fixed; font-size: 14px; line-height: 1.5;
+}
+.memo-editor th, .memo-editor td {
+  min-width: 48px; padding: 6px 7px; border: 1px solid #cbd5e1; vertical-align: top;
+}
+.memo-editor th { background: #f1f5f9; font-weight: 600; text-align: left; }
+.memo-editor td:focus, .memo-editor th:focus { outline: 2px solid #bae6fd; outline-offset: -2px; }
+.memo-editor font[size="2"] { font-size: 13px; }
+.memo-editor font[size="3"] { font-size: 15px; }
+.memo-editor font[size="5"] { font-size: 18px; }
 .memo-foot { display: flex; justify-content: flex-end; align-items: center; margin-top: 8px; }
 .memo-foot .hint { margin: 0; }
 
 @media (max-width: 700px) {
-  .memo-text { min-height: max(300px, calc(100vh - 330px)); font-size: 16px; }   /* 铺满屏幕；16px 避免 iOS 聚焦时自动放大 */
+  .memo-toolbar { gap: 3px; padding: 6px; }
+  .memo-tool, .memo-select { height: 27px; padding: 0 6px; font-size: 11.5px; }
+  .memo-select { max-width: 68px; }
+  .memo-editor { min-height: max(300px, calc(100vh - 390px)); font-size: 16px; }   /* 16px 避免 iOS 聚焦时自动放大 */
 }
 
 /* ============ V7：习惯去序号 + 新条目高亮 ============ */

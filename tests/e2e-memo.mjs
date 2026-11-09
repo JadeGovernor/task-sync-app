@@ -46,21 +46,27 @@ await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScal
 const inj=await send('Page.addScriptToEvaluateOnNewDocument',{source:MOCK});
 await load(URL_);await wait(1800);
 const goTab=async name=>{await ev(`[...document.querySelectorAll('.tab')].find(t=>t.textContent.includes(${JSON.stringify(name)})).click()`);await wait(400)};
+const memoHtml=(text)=>String(text).split('\n').map(line=>line
+  ? '<div>'+line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</div>'
+  : '<div><br></div>').join('');
+const setMemo=async text=>{await ev(`(()=>{const ed=document.querySelector('#memo-text');ed.focus();
+  ed.innerHTML=${JSON.stringify(memoHtml(text))};ed.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);};
+const memoVal=()=>ev(`(()=>{const ed=document.querySelector('#memo-text');return ed?String(ed.innerText||'').replace(/\\n+$/,''):''})()`);
 
 // ===== 1) 琐事：敲完字立刻切页 =====
 await goTab('琐事');
 ok('1a 琐事页有输入框', await ev(`!!document.querySelector('#memo-text')`));
-await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.focus();ta.value='买牛奶 + 交房租';ta.dispatchEvent(new Event('input',{bubbles:true}));return 1;})()`);
+await setMemo('买牛奶 + 交房租');
 await wait(120);
 await goTab('习惯');
 await wait(1600);
 await goTab('琐事');
-const memoBack=await ev(`document.querySelector('#memo-text').value`);
+const memoBack=await memoVal();
 ok('1b 切页回来字还在', memoBack==='买牛奶 + 交房租', memoBack);
 ok('1c 已进远端', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes('买牛奶 + 交房租')`));
 ok('1d 待上传队列已清空', await ev(`JSON.parse(localStorage.getItem('ts_outbox_v2')||'[]').length`)===0);
 await wait(6000);
-ok('1e 心跳后仍在（没被冲掉）', await ev(`document.querySelector('#memo-text') && document.querySelector('#memo-text').value==='买牛奶 + 交房租'`));
+ok('1e 心跳后仍在（没被冲掉）', (await memoVal())==='买牛奶 + 交房租');
 
 // ===== 2) 习惯：加一条 -> 删掉 -> 反复心跳不复活 =====
 await goTab('习惯');
@@ -84,15 +90,15 @@ ok('2e 琐事仍在', await ev(`window.__mock.files()['tasks.json'].some(t=>t.me
 // ===== 2.5) 创意备忘录：和琐事同款、互不干扰 =====
 await goTab('创意');
 ok('2f 创意页有输入框', await ev(`!!document.querySelector('#memo-text')`));
-ok('2g 创意初始为空', (await ev(`document.querySelector('#memo-text').value`))==='');
-await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.focus();ta.value='做一个自动播演讲的闹钟';ta.dispatchEvent(new Event('input',{bubbles:true}));return 1;})()`);
+ok('2g 创意初始为空', (await memoVal())==='');
+await setMemo('做一个自动播演讲的闹钟');
 await wait(1400);
 ok('2h 创意已进远端', await ev(`window.__mock.files()['tasks.json'].some(t=>t.kind==='idea'&&t.memo==='做一个自动播演讲的闹钟')`));
 await goTab('琐事');
-const memoStill=await ev(`document.querySelector('#memo-text').value`);
+const memoStill=await memoVal();
 ok('2i 切回琐事内容没被串改', memoStill==='买牛奶 + 交房租', memoStill);
 await goTab('创意');
-ok('2j 创意内容还在', (await ev(`document.querySelector('#memo-text').value`))==='做一个自动播演讲的闹钟');
+ok('2j 创意内容还在', (await memoVal())==='做一个自动播演讲的闹钟');
 ok('2k 两条备忘录各自一条', await ev(`(()=>{const f=window.__mock.files()['tasks.json'];return f.filter(t=>t.kind==='memo').length===1&&f.filter(t=>t.kind==='idea').length===1})()`));
 ok('2l 灵感不混进今日/公司/计划', await ev(`(()=>{document.querySelector('[data-tab="today"]').click();return 1})()`)!==undefined);
 await wait(400);

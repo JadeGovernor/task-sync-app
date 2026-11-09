@@ -61,7 +61,19 @@ const inj=await send('Page.addScriptToEvaluateOnNewDocument',{source:MOCK});
 await load(URL_);await wait(1800);
 const goTab=async name=>{await ev(`[...document.querySelectorAll('.tab')].find(t=>t.textContent.includes(${JSON.stringify(name)})).click()`);await wait(400)};
 const dAfter=async n=>ev(`Core.shiftDate(Core.todayStr(),${n})`);
-const memoVal=()=>ev(`document.querySelector('#memo-text').value`);
+const memoVal=()=>ev(`(()=>{const ed=document.querySelector('#memo-text');return ed?String(ed.innerText||'').replace(/\\n+$/,''):''})()`);
+const memoHtml=text=>String(text).split('\n').map(line=>line
+  ? '<div>'+line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</div>'
+  : '<div><br></div>').join('');
+const setMemo=async text=>{await ev(`(()=>{const ed=document.querySelector('#memo-text');ed.focus();
+  ed.innerHTML=${JSON.stringify(memoHtml(text))};ed.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);
+  await wait(1200);};
+const setCaretLine=async (line, offset=0)=>{await ev(`(()=>{const ed=document.querySelector('#memo-text');
+  const blocks=[...ed.children];const el=blocks[${line}]||ed.lastElementChild||ed;
+  let node=null;const w=document.createTreeWalker(el,NodeFilter.SHOW_TEXT);node=w.nextNode();
+  if(!node)node=el.appendChild(document.createTextNode(''));
+  const r=document.createRange();r.setStart(node,Math.min(${offset},node.nodeValue.length));r.collapse(true);
+  const s=getSelection();s.removeAllRanges();s.addRange(r);return 1})()`);};
 const rows=()=>ev(`document.querySelectorAll('#memo-timers .timer-row').length`);
 const rowInfo=()=>ev(`[...document.querySelectorAll('#memo-timers .timer-row')].map(r=>({cls:r.className,left:r.querySelector('.timer-left').textContent,text:r.querySelector('.timer-text').textContent,due:r.querySelector('.timer-due').textContent}))`);
 
@@ -69,8 +81,8 @@ const rowInfo=()=>ev(`[...document.querySelectorAll('#memo-timers .timer-row')].
 await goTab('琐事');
 ok('1a 琐事页有日期+按钮', await ev(`!!document.querySelector('#memo-timer-date')&&!!document.querySelector('#memo-timer-add')`));
 ok('1a2 初始没有倒计时板行', (await rows())===0);
-await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.focus();ta.value='买牛奶\\n交房租';ta.dispatchEvent(new Event('input',{bubbles:true}));
-  const pos=ta.value.indexOf('交房租')+1;ta.setSelectionRange(pos,pos);return 1})()`);
+await setMemo('买牛奶\n交房租');
+await setCaretLine(1,1);
 await wait(200);
 const d3=await dAfter(3);
 await ev(`(()=>{document.querySelector('#memo-timer-date').value=${JSON.stringify(d3)};document.querySelector('#memo-timer-add').click();return 1})()`);
@@ -94,7 +106,7 @@ ok('1i 改完也同步出去了', await ev(`JSON.stringify(window.__mock.files()
 
 // 手写标记：直接敲进正文也认
 const dOver=await dAfter(-4);
-await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.value='买牛奶 ⏰'+${JSON.stringify(dOver)}+'\\n交房租 ⏰'+${JSON.stringify(d10)};ta.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);
+await setMemo('买牛奶 ⏰'+dOver+'\n交房租 ⏰'+d10);
 await wait(1400);
 ok('1j 手写标记被自动识别', (await rows())===2, await rows());
 const rs=(await rowInfo());
@@ -111,7 +123,8 @@ ok('1n 板上只剩一条', (await rows())===1, await rows());
 await goTab('创意');
 ok('2a 创意页也有倒计时工具条', await ev(`!!document.querySelector('#memo-timer-add')`));
 const d1=await dAfter(1);
-await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.focus();ta.value='做一个自动播演讲的闹钟';ta.setSelectionRange(3,3);ta.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);
+await setMemo('做一个自动播演讲的闹钟');
+await setCaretLine(0,3);
 await wait(200);
 await ev(`(()=>{document.querySelector('#memo-timer-date').value=${JSON.stringify(d1)};document.querySelector('#memo-timer-add').click();return 1})()`);
 await wait(400);
@@ -123,7 +136,7 @@ ok('2d 两条备忘录各自独立', await ev(`(()=>{const f=window.__mock.files
 const d0=await dAfter(0);
 await goTab('琐事');
 ok('3a 日期默认就是今天（不是一周后）', (await ev(`document.querySelector('#memo-timer-date').value`))===d0);
-await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.focus();ta.setSelectionRange(1,1);return 1})()`);
+await setCaretLine(0,1);
 await wait(200);
 await ev(`(()=>{document.querySelector('#memo-timer-date').value=${JSON.stringify(d0)};document.querySelector('#memo-timer-add').click();return 1})()`);
 await wait(400);
@@ -138,7 +151,7 @@ ok('3f 更远（10 天后）的也不进来', !todayTxt.includes('交房租'), t
 
 // 过期的同样要提醒
 await goTab('琐事');
-await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.value=${JSON.stringify('牛奶过期了 ⏰')}+${JSON.stringify(dOver)}+'\\n'+ta.value;ta.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);
+await setMemo('牛奶过期了 ⏰'+dOver+'\n'+(await memoVal()));
 await wait(1400);
 await goTab('今日');
 const todayTxt2=await ev(`document.querySelector('#view').innerText`);
@@ -225,8 +238,6 @@ await goTab('今日');
 // ===== 3.7) 今日页里直接补进展 / 删倒计时 / 拖动排序（不用回琐事 / 创意） =====
 const findItem = (box,t)=>`[...document.querySelectorAll('${box} .timer-item')].find(x=>x.querySelector('.timer-text').textContent===${JSON.stringify(t)})`;
 const subInfo = (box)=>ev(`[...document.querySelectorAll('${box} .timer-sub')].map(s=>({md:s.querySelector('.sub-md').textContent,text:s.querySelector('.sub-text').textContent}))`);
-const setMemo = async (text)=>{await ev(`(()=>{const ta=document.querySelector('#memo-text');ta.value=${JSON.stringify(text)};ta.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);await wait(1400)};
-
 await goTab('今日');
 ok('3.7a 今日页每行都有 ＋进展 / ✕ / 日期', await ev(`document.querySelectorAll('#today-timers [data-action="sub-add"]').length===2&&document.querySelectorAll('#today-timers [data-action="timer-del"]').length===2&&document.querySelectorAll('#today-timers .timer-date').length===2`));
 ok('3.7b 今日页整条是拖动单元', await ev(`[...document.querySelectorAll('#today-timers .timer-item')].every(x=>x.querySelector('.timer-row'))`));

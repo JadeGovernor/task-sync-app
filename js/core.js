@@ -73,9 +73,11 @@
     } else if (partial && partial.kind === 'memo') {
       base.title = '琐事';
       base.memo = '';           // 一整张备忘录的正文，随时改
+      base.memoHtml = '';       // 富文本版本；memo 继续保留纯文本给倒计时识别
     } else if (partial && partial.kind === 'idea') {
       base.title = '创意';
       base.memo = '';           // 和琐事同款：整张备忘录只有一条，正文放在 memo 字段
+      base.memoHtml = '';
     }
     return Object.assign(base, partial || {});
   }

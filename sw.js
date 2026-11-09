@@ -1,6 +1,6 @@
 /* 离线缓存 Service Worker：只缓存本站静态资源，绝不缓存 GitHub 数据请求 */
 'use strict';
-const CACHE = 'task-sync-v39';
+const CACHE = 'task-sync-v40';
 const ASSETS = [
   './',
   './index.html',

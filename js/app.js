@@ -29,18 +29,18 @@
   const MEMOS = {
     memo: {
       tab: 'memo', kind: 'memo', title: '琐事备忘录',
-      sub: '想到什么写什么，停手约 1 秒自动保存并同步到三端。没有格式，就是一张随时能改的纸。',
+      sub: '想到什么写什么；上方可以加粗、分标题、改字号/颜色、高亮和插表格。停手约 1 秒自动保存并同步三端。',
       ph: '随手记：要买的东西、待查的资料、临时冒出来的点子…'
     },
     idea: {
       tab: 'idea', kind: 'idea', title: '创意备忘录',
-      sub: '想法一冒出来就丢进来，停手约 1 秒自动保存并同步到三端。先记下，不用整理格式。',
+      sub: '想法一冒出来就丢进来；需要时再用上方工具栏排版。停手约 1 秒自动保存并同步三端。',
       ph: '随手记：突然想到的点子、想试的做法、产品灵感、看到的参考…'
     }
   };
   const memoState = {};
   Object.keys(MEMOS).forEach((k) => {
-    memoState[k] = { timer: null, dirty: false, flushing: false, draft: null };
+    memoState[k] = { timer: null, dirty: false, flushing: false, draft: null, html: null };
   });
   const anyMemoFlushing = () => Object.keys(memoState).some((k) => memoState[k].flushing);
 
@@ -713,6 +713,354 @@
   }
 
   /* ---------- 备忘录（琐事 / 创意）：一整张纸，随便写、随时改 ---------- */
+  /* 富文本正文存 memoHtml；memo 继续存纯文本，倒计时、打勾、进展都还按纯文本工作。
+   * 这样旧数据不用迁移，新增格式也只影响显示层。 */
+  const MEMO_DROP_TAGS = new Set([
+    'SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'FORM', 'INPUT', 'TEXTAREA',
+    'BUTTON', 'SELECT', 'OPTION', 'LINK', 'META', 'BASE', 'SVG', 'MATH',
+    'VIDEO', 'AUDIO', 'SOURCE', 'CANVAS'
+  ]);
+  const MEMO_ALLOWED_TAGS = new Set([
+    'DIV', 'P', 'BR', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE',
+    'SPAN', 'FONT', 'H2', 'H3', 'H4', 'UL', 'OL', 'LI', 'BLOCKQUOTE',
+    'PRE', 'CODE', 'HR', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR',
+    'TH', 'TD', 'CAPTION', 'COLGROUP', 'COL'
+  ]);
+  const MEMO_ALLOWED_STYLE = new Set([
+    'color', 'background-color', 'font-size', 'font-weight', 'font-style',
+    'text-decoration', 'text-align'
+  ]);
+  function normalizeMemoPlain(text) {
+    return String(text == null ? '' : text)
+      .replace(/\r\n?/g, '\n')
+      .replace(/\u00a0/g, ' ')
+      .replace(/\n+$/, '');
+  }
+  function memoCleanStyle(value) {
+    const out = [];
+    String(value || '').split(';').forEach((part) => {
+      const at = part.indexOf(':');
+      if (at < 0) return;
+      const k = part.slice(0, at).trim().toLowerCase();
+      let v = part.slice(at + 1).trim();
+      if (!MEMO_ALLOWED_STYLE.has(k) || !v || /url\s*\(|expression|javascript:|@import/i.test(v)) return;
+      v = v.replace(/\s*!important\s*$/i, '');
+      if ((k === 'color' || k === 'background-color') &&
+          !/^(#[0-9a-f]{3,8}|(?:rgb|hsl)a?\([^)]*\)|[a-z]+)$/i.test(v)) return;
+      if (k === 'font-size' && !/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)$/i.test(v)) return;
+      if (k === 'font-weight' && !/^(normal|bold|bolder|lighter|[1-9]00)$/i.test(v)) return;
+      if (k === 'text-align' && !/^(left|right|center|justify|start|end)$/i.test(v)) return;
+      out.push(k + ':' + v);
+    });
+    return out.join(';');
+  }
+  function sanitizeMemoHtml(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = String(html == null ? '' : html);
+    const walk = (parent) => {
+      Array.from(parent.childNodes).forEach((node) => {
+        if (node.nodeType === 3) return;
+        if (node.nodeType !== 1) { node.remove(); return; }
+        const tag = node.tagName.toUpperCase();
+        if (MEMO_DROP_TAGS.has(tag)) { node.remove(); return; }
+        if (!MEMO_ALLOWED_TAGS.has(tag)) {
+          walk(node);
+          const kids = Array.from(node.childNodes);
+          if (kids.length) node.replaceWith.apply(node, kids);
+          else node.remove();
+          return;
+        }
+        Array.from(node.attributes).forEach((attr) => {
+          const name = attr.name.toLowerCase();
+          if (name === 'style') {
+            const style = memoCleanStyle(attr.value);
+            if (style) node.setAttribute('style', style);
+            else node.removeAttribute(attr.name);
+            return;
+          }
+          if (tag === 'FONT' && name === 'size' && /^[2-5]$/.test(attr.value)) return;
+          if ((tag === 'TD' || tag === 'TH') && (name === 'colspan' || name === 'rowspan') &&
+              /^[1-9]\d?$/.test(attr.value)) return;
+          node.removeAttribute(attr.name);
+        });
+        if (tag === 'FONT' && !node.getAttribute('size')) {
+          const kids = Array.from(node.childNodes);
+          if (kids.length) node.replaceWith.apply(node, kids);
+          else node.remove();
+          return;
+        }
+        if (tag === 'SPAN' && !node.getAttribute('style')) {
+          const kids = Array.from(node.childNodes);
+          if (kids.length) node.replaceWith.apply(node, kids);
+          else node.remove();
+          return;
+        }
+        walk(node);
+      });
+    };
+    walk(tpl.content);
+    return tpl.innerHTML;
+  }
+  function memoLineHtml(line) {
+    const s = String(line == null ? '' : line);
+    return '<div>' + (s ? esc(s) : '<br>') + '</div>';
+  }
+  function memoTextToHtml(text) {
+    const s = normalizeMemoPlain(text);
+    if (!s) return '';
+    return s.split('\n').map(memoLineHtml).join('');
+  }
+  const MEMO_LINE_BLOCKS = new Set([
+    'DIV', 'P', 'H2', 'H3', 'H4', 'LI', 'BLOCKQUOTE', 'PRE', 'TABLE', 'HR'
+  ]);
+  function memoTableSummary(table) {
+    return Array.from(table.rows || []).map((tr) =>
+      Array.from(tr.cells || []).map((td) =>
+        normalizeMemoPlain(td.textContent || '').replace(/\s+/g, ' ').trim()
+      ).join(' | ')
+    ).join(' / ');
+  }
+  function memoDomPlain(root) {
+    let out = '';
+    const cut = () => { if (out && !/\n$/.test(out)) out += '\n'; };
+    const walk = (node) => {
+      if (node.nodeType === 3) { out += node.nodeValue || ''; return; }
+      if (node.nodeType !== 1) return;
+      const tag = node.tagName.toUpperCase();
+      if (tag === 'BR') { out += '\n'; return; }
+      if (tag === 'TABLE') {
+        cut();
+        out += memoTableSummary(node);
+        cut();
+        return;
+      }
+      if (tag === 'HR') { cut(); out += '\n'; return; }
+      const block = MEMO_LINE_BLOCKS.has(tag);
+      if (block) cut();
+      Array.from(node.childNodes).forEach(walk);
+      if (block) cut();
+    };
+    Array.from(root.childNodes).forEach(walk);
+    return normalizeMemoPlain(out);
+  }
+  function memoStoredHtml(item) {
+    return item && typeof item.memoHtml === 'string' ? item.memoHtml : '';
+  }
+  function memoHtmlForItem(item, text) {
+    const stored = memoStoredHtml(item);
+    if (!stored) return '';
+    /* 三端滚动更新时，旧版本可能只改了 memo 纯文本、没改 memoHtml。
+     * 两份对不上就以纯文本为准，避免新版一直显示旧格式里的旧内容。 */
+    const box = document.createElement('div');
+    box.innerHTML = sanitizeMemoHtml(stored);
+    return memoDomPlain(box) === normalizeMemoPlain(text) ? stored : memoTextToHtml(text);
+  }
+  function memoHtmlNow(tab) {
+    const st = memoState[tab];
+    if (st && st.html != null) return st.html;
+    const item = Core.memoOf(items(), MEMOS[tab].kind);
+    const text = Core.memoText(items(), MEMOS[tab].kind);
+    return memoHtmlForItem(item, text) || memoTextToHtml(text);
+  }
+  function memoBlockText(node) {
+    if (node.tagName === 'TABLE') return memoTableSummary(node);
+    return memoDomPlain(node);
+  }
+  function memoHtmlBlocks(html) {
+    const root = document.createElement('div');
+    root.innerHTML = sanitizeMemoHtml(html);
+    const blocks = [];
+    let inline = [];
+    const flushInline = () => {
+      if (!inline.length) return;
+      const wrap = document.createElement('div');
+      inline.forEach((node) => wrap.appendChild(node.cloneNode(true)));
+      const text = memoDomPlain(wrap);
+      blocks.push({ html: '<div>' + (wrap.innerHTML || '<br>') + '</div>', text, multi: text.indexOf('\n') >= 0 });
+      inline = [];
+    };
+    Array.from(root.childNodes).forEach((node) => {
+      if (node.nodeType === 3) {
+        String(node.nodeValue || '').split('\n').forEach((part, i) => {
+          if (i > 0) flushInline();
+          if (part) inline.push(document.createTextNode(part));
+        });
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      if (node.tagName === 'BR') {
+        if (inline.length) flushInline();
+        else blocks.push({ html: '<div><br></div>', text: '' });
+        return;
+      }
+      if (MEMO_LINE_BLOCKS.has(node.tagName)) {
+        flushInline();
+        const text = memoBlockText(node);
+        blocks.push({ html: node.outerHTML, text, multi: text.indexOf('\n') >= 0 });
+        return;
+      }
+      inline.push(node);
+    });
+    flushInline();
+    while (blocks.length && !blocks[blocks.length - 1].text) blocks.pop();
+    return blocks;
+  }
+  function memoRichFromText(oldText, oldHtml, newText) {
+    const oldLines = normalizeMemoPlain(oldText).split('\n');
+    const newLines = normalizeMemoPlain(newText).split('\n');
+    const nextPlain = normalizeMemoPlain(newText);
+    if (!nextPlain) return '';
+    if (!normalizeMemoPlain(oldText)) return memoTextToHtml(nextPlain);
+    const blocks = memoHtmlBlocks(oldHtml);
+    if (blocks.length !== oldLines.length || blocks.some((b) => b.multi)) {
+      return memoTextToHtml(nextPlain);
+    }
+    const count = (lines) => {
+      const map = new Map();
+      lines.forEach((line) => map.set(line, (map.get(line) || 0) + 1));
+      return map;
+    };
+    const a = count(oldLines);
+    const b = count(newLines);
+    let same = a.size === b.size;
+    if (same) a.forEach((n, line) => { if (b.get(line) !== n) same = false; });
+    if (same) {
+      const buckets = new Map();
+      oldLines.forEach((line, i) => {
+        if (!buckets.has(line)) buckets.set(line, []);
+        buckets.get(line).push(blocks[i].html);
+      });
+      return newLines.map((line) => buckets.get(line).shift()).join('');
+    }
+    const n = oldLines.length;
+    const m = newLines.length;
+    if (!n || !m || n * m > 220000) return memoTextToHtml(nextPlain);
+    const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+    for (let i = n - 1; i >= 0; i -= 1) {
+      for (let j = m - 1; j >= 0; j -= 1) {
+        dp[i][j] = oldLines[i] === newLines[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const match = new Array(m).fill(-1);
+    let i = 0;
+    let j = 0;
+    while (i < n && j < m) {
+      if (oldLines[i] === newLines[j]) { match[j] = i; i += 1; j += 1; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) i += 1;
+      else j += 1;
+    }
+    return newLines.map((line, k) =>
+      match[k] >= 0 ? blocks[match[k]].html : memoLineHtml(line)
+    ).join('');
+  }
+  function memoEditorPlain(ed) {
+    return ed ? memoDomPlain(ed) : '';
+  }
+  function memoEditorHtml(ed) {
+    return ed ? sanitizeMemoHtml(ed.innerHTML) : '';
+  }
+  function memoSetEditor(ed, html) {
+    if (!ed) return;
+    ed.innerHTML = sanitizeMemoHtml(html);
+    const has = !!(ed.textContent || '').trim() || !!ed.querySelector('table,hr');
+    ed.classList.toggle('is-empty', !has);
+  }
+  function memoCaretLine(ed) {
+    const fallback = Math.max(0, memoEditorPlain(ed).split('\n').length - 1);
+    const sel = window.getSelection();
+    if (!ed || !sel || !sel.rangeCount || !sel.anchorNode || !ed.contains(sel.anchorNode)) return fallback;
+    const range = sel.getRangeAt(0).cloneRange();
+    const marker = document.createElement('span');
+    marker.textContent = '\u200b';
+    try { range.insertNode(marker); } catch (err) { return fallback; }
+    const text = memoEditorPlain(ed);
+    const at = text.indexOf('\u200b');
+    marker.remove();
+    if (at < 0) return fallback;
+    return normalizeMemoPlain(text.slice(0, at)).split('\n').length - 1;
+  }
+  let memoSavedRange = null;
+  function rememberMemoSelection() {
+    const ed = document.getElementById('memo-text');
+    if (!ed || !MEMOS[current]) return;
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount && sel.anchorNode && ed.contains(sel.anchorNode)) {
+      memoSavedRange = sel.getRangeAt(0).cloneRange();
+    }
+  }
+  function restoreMemoSelection(ed) {
+    if (!ed) return;
+    ed.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    if (sel.rangeCount && sel.anchorNode && ed.contains(sel.anchorNode)) return;
+    if (!memoSavedRange || !ed.contains(memoSavedRange.commonAncestorContainer)) return;
+    sel.removeAllRanges();
+    sel.addRange(memoSavedRange);
+  }
+  function memoTableHtml() {
+    const cell = (tag) => '<' + tag + '><br></' + tag + '>';
+    return '<table><tbody>' +
+      '<tr><th>列 1</th><th>列 2</th><th>列 3</th></tr>' +
+      '<tr>' + cell('td') + cell('td') + cell('td') + '</tr>' +
+      '<tr>' + cell('td') + cell('td') + cell('td') + '</tr>' +
+      '</tbody></table>';
+  }
+  function insertMemoTable(ed) {
+    const sel = window.getSelection();
+    const wrap = document.createElement('div');
+    wrap.innerHTML = memoTableHtml();
+    const spacer = document.createElement('div');
+    spacer.innerHTML = '<br>';
+    let node = sel && sel.rangeCount ? sel.anchorNode : null;
+    while (node && node.parentNode !== ed) node = node.parentNode;
+    let block = node && node.nodeType === 1 && MEMO_LINE_BLOCKS.has(node.tagName) ? node : null;
+    if (!block && node && node.previousElementSibling &&
+        MEMO_LINE_BLOCKS.has(node.previousElementSibling.tagName)) {
+      block = node.previousElementSibling;
+    }
+    if (block) block.after(wrap, spacer);
+    else { ed.appendChild(wrap); ed.appendChild(spacer); }
+    const cell = wrap.querySelector('td,th');
+    if (cell && sel) {
+      const r = document.createRange();
+      r.setStart(cell, 0);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+  }
+  function applyMemoCommand(tab, cmd, value) {
+    const ed = document.getElementById('memo-text');
+    if (!ed) return;
+    restoreMemoSelection(ed);
+    try {
+      if (cmd === 'bold') {
+        document.execCommand('styleWithCSS', false, true);
+        document.execCommand('bold', false, null);
+      } else if (cmd === 'block') {
+        document.execCommand('formatBlock', false, String(value || 'p').toUpperCase());
+      } else if (cmd === 'size') {
+        document.execCommand('styleWithCSS', false, false);
+        document.execCommand('fontSize', false, String(value || '3'));
+      } else if (cmd === 'highlight') {
+        document.execCommand('styleWithCSS', false, true);
+        document.execCommand('hiliteColor', false, value || 'transparent');
+      } else if (cmd === 'color') {
+        document.execCommand('styleWithCSS', false, true);
+        document.execCommand('foreColor', false, value || '#0f172a');
+      } else if (cmd === 'table') {
+        insertMemoTable(ed);
+      } else if (cmd === 'clear') {
+        document.execCommand('removeFormat', false, null);
+        document.execCommand('formatBlock', false, 'P');
+      }
+    } catch (err) { /* 老浏览器不支持某个命令时保持原文，不要报错 */ }
+    memoOnInput(tab);
+    rememberMemoSelection();
+  }
   function memoStamp(tab) {
     const m = Core.memoOf(items(), MEMOS[tab].kind);
     if (!m || !m.updatedAt) return '还没有内容';
@@ -780,6 +1128,9 @@
   }
   function refreshTimerBoard(tab) {
     if (current !== tab) return;
+    /* 拖动期间别直接换掉板子的 DOM；否则按下后光标一失焦，blur 里的这次刷新
+     * 会把正被拖的条目换成孤儿节点。等拖完由 flushPendingRender 统一重建。 */
+    if (sortActive > 0) { pendingRender = true; return; }
     const el = document.getElementById('memo-timers');
     if (el) el.innerHTML = timerBoardInner(tab);
   }
@@ -849,31 +1200,68 @@
   /* 用一段新正文替换备忘录：走和手打一样的落盘路径，只重画倒计时板，不重建输入框 */
   function applyMemoText(tab, text) {
     const st = memoState[tab];
-    const ta = current === tab ? document.getElementById('memo-text') : null;
-    if (ta) ta.value = text;
-    st.draft = text;
+    const oldText = memoTextNow(tab);
+    const oldHtml = memoHtmlNow(tab);
+    const html = memoRichFromText(oldText, oldHtml, text);
+    const ed = current === tab ? document.getElementById('memo-text') : null;
+    if (ed) memoSetEditor(ed, html);
+    st.draft = normalizeMemoPlain(text);
+    st.html = html;
     st.dirty = true;
     flushMemo(tab);
-    if (ta) {
+    if (ed) {
       const cnt = document.getElementById('memo-count');
-      if (cnt) cnt.textContent = ta.value.length + ' 字';
+      if (cnt) cnt.textContent = normalizeMemoPlain(text).length + ' 字';
     }
     refreshTimerBoard(tab);
     const s = document.getElementById('memo-state');
     if (s && !st.dirty) s.textContent = memoStamp(tab);
+  }
+  function memoToolbarHTML() {
+    return '<div class="memo-toolbar" id="memo-toolbar" role="toolbar" aria-label="文字格式">' +
+      '<button class="memo-tool memo-bold" type="button" data-memo-cmd="bold" title="加粗（选中文字后点）"><b>B</b></button>' +
+      '<select class="memo-select" data-memo-select="block" aria-label="段落样式">' +
+        '<option value="">段落</option><option value="p">正文</option>' +
+        '<option value="h2">标题</option><option value="h3">小标题</option>' +
+      '</select>' +
+      '<select class="memo-select" data-memo-select="size" aria-label="字号">' +
+        '<option value="">字号</option><option value="2">小</option>' +
+        '<option value="3">标准</option><option value="5">大</option>' +
+      '</select>' +
+      '<select class="memo-select" data-memo-select="highlight" aria-label="高亮颜色">' +
+        '<option value="">高亮</option><option value="#fef08a">黄</option>' +
+        '<option value="#bbf7d0">绿</option><option value="#bfdbfe">蓝</option>' +
+        '<option value="transparent">清除</option>' +
+      '</select>' +
+      '<select class="memo-select" data-memo-select="color" aria-label="文字颜色">' +
+        '<option value="">字色</option><option value="#0f172a">默认</option>' +
+        '<option value="#dc2626">红</option><option value="#2563eb">蓝</option>' +
+        '<option value="#15803d">绿</option>' +
+      '</select>' +
+      '<span class="memo-sep" aria-hidden="true"></span>' +
+      '<button class="memo-tool" type="button" data-memo-cmd="table" title="插入 3×3 表格">▦ 表格</button>' +
+      '<button class="memo-tool" type="button" data-memo-cmd="clear" title="清除选中文字的格式">清除格式</button>' +
+    '</div>';
   }
   function renderMemo(tab) {
     const cfg = MEMOS[tab];
     const st = memoState[tab];
     // 有未落盘的草稿就显示草稿：同步触发的重渲染不会把正在敲的字冲掉
     const text = st.draft != null ? st.draft : Core.memoText(items(), cfg.kind);
+    const item = Core.memoOf(items(), cfg.kind);
+    const html = st.html != null ? st.html : (memoHtmlForItem(item, text) || memoTextToHtml(text));
+    const cleanHtml = sanitizeMemoHtml(html);
+    const empty = !String(text || '').trim() && !/<(?:table|hr)\b/i.test(cleanHtml);
     const dueDefault = today();
     return '<section class="card memo-card memo-' + tab + '">' +
       '<h3>' + esc(cfg.title) + ' <span class="cnt" id="memo-count">' + text.length + ' 字</span></h3>' +
       '<p class="hint tight">' + esc(cfg.sub) + '</p>' +
       timerBoardHTML(tab) +
-      '<textarea id="memo-text" class="memo-text" spellcheck="false" ' +
-      'placeholder="' + esc(cfg.ph) + '">' + esc(text) + '</textarea>' +
+      '<div class="memo-editor-shell">' + memoToolbarHTML() +
+        '<div id="memo-text" class="memo-editor' + (empty ? ' is-empty' : '') + '" ' +
+          'contenteditable="true" role="textbox" aria-multiline="true" spellcheck="false" ' +
+          'data-placeholder="' + esc(cfg.ph) + '">' + cleanHtml + '</div>' +
+      '</div>' +
       '<div class="timer-add">' +
       '<span class="timer-add-label">' + Core.TIMER_MARK + ' 倒计时</span>' +
       '<input type="date" id="memo-timer-date" value="' + esc(dueDefault) + '" title="给光标所在那一行选个到期日" />' +
@@ -891,17 +1279,22 @@
     const st = memoState[t];
     if (st.timer) { clearTimeout(st.timer); st.timer = null; }
     if (!st.dirty && st.draft == null) return;
-    // 只有当前正显示这张备忘录时输入框才是它的，否则一律用草稿兜底
-    const ta = current === t ? document.getElementById('memo-text') : null;
-    const text = ta ? ta.value : st.draft;
+    // 只有当前正显示这张备忘录时编辑区才是它的，否则一律用草稿兜底
+    const ed = current === t ? document.getElementById('memo-text') : null;
+    const text = ed ? memoEditorPlain(ed) : st.draft;
     if (text == null) return;
+    const html = ed ? memoEditorHtml(ed) : (st.html != null ? st.html : memoTextToHtml(text));
     st.dirty = false;
-    if (text === Core.memoText(items(), cfg.kind)) { st.draft = null; return; }
+    const prevText = Core.memoText(items(), cfg.kind);
+    const prevItem = Core.memoOf(items(), cfg.kind);
+    const prevHtml = memoStoredHtml(prevItem);
+    if (text === prevText && html === prevHtml) { st.draft = null; st.html = null; return; }
     const base = Core.memoOf(items(), cfg.kind) || Core.newItem({ kind: cfg.kind });
     st.draft = null;
+    st.html = null;
     st.flushing = true;                        // 期间 onchange 触发的 render 直接跳过
     try {
-      store.saveTask(Object.assign({}, base, { memo: text }));
+      store.saveTask(Object.assign({}, base, { memo: text, memoHtml: html || memoTextToHtml(text) }));
     } finally {
       st.flushing = false;
     }
@@ -909,11 +1302,15 @@
   function memoOnInput(tab) {
     const st = memoState[tab];
     st.dirty = true;
-    const ta = document.getElementById('memo-text');
-    if (ta) st.draft = ta.value;
+    const ed = document.getElementById('memo-text');
+    if (ed) {
+      st.draft = memoEditorPlain(ed);
+      st.html = memoEditorHtml(ed);
+      ed.classList.toggle('is-empty', !st.draft.trim() && !ed.querySelector('table,hr'));
+    }
     const cnt = document.getElementById('memo-count');
     const state = document.getElementById('memo-state');
-    if (ta && cnt) cnt.textContent = ta.value.length + ' 字';
+    if (ed && cnt) cnt.textContent = (st.draft || '').length + ' 字';
     if (state) state.textContent = '保存中…';
     if (st.timer) clearTimeout(st.timer);
     st.timer = setTimeout(() => {
@@ -984,6 +1381,7 @@
   }
   function refreshTodayTimers() {
     if (current !== 'today') return;
+    if (sortActive > 0) { pendingRender = true; return; }
     const el = document.getElementById('today-timers');
     if (el) el.innerHTML = todayTimersBodyHTML();
   }
@@ -1271,11 +1669,11 @@
     if (anyMemoFlushing()) return;               // 备忘录正在落盘，别把输入框重建掉
     if (MEMOS[current]) {
       const st = memoState[current];
-      const ta = document.getElementById('memo-text');
-      if (ta && document.activeElement === ta) {
-        const typed = ta.value;
+      const ed = document.getElementById('memo-text');
+      if (ed && document.activeElement === ed) {
+        const typed = memoEditorPlain(ed);
         flushMemo(current);                      // 先把正在敲的字存下来
-        if (ta.isConnected && typed === Core.memoText(items(), MEMOS[current].kind)) {
+        if (ed.isConnected && typed === Core.memoText(items(), MEMOS[current].kind)) {
           $('#subline').textContent = statusText();   // 内容没变：只更新顶栏，保住光标
           return;
         }
@@ -1484,12 +1882,12 @@
     /* 兜底：鼠标在窗口外松开、切后台、按 Esc、或 event 对不上实例时，
        pointerup 可能永远收不到。这时页面会一直留着浮起来的卡片 + is-dragging 锁（就是「卡住」）。
        任何可疑信号都来清一次，清不到东西也不会有副作用。 */
-    window.addEventListener('blur', () => abortAllDrags());
-    document.addEventListener('visibilitychange', () => { if (document.hidden) abortAllDrags(); });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') abortAllDrags(); });
-    window.addEventListener('pointerup', () => setTimeout(abortAllDrags, 0));       // 正常收尾之后兜底
-    window.addEventListener('pointercancel', () => setTimeout(abortAllDrags, 0));
-    window.addEventListener('touchend', () => setTimeout(abortAllDrags, 0));
+    window.addEventListener('blur', () => abortAllDrags(true));
+    document.addEventListener('visibilitychange', () => { if (document.hidden) abortAllDrags(true); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') abortAllDrags(true); });
+    window.addEventListener('pointerup', () => setTimeout(() => abortAllDrags(false), 0));       // 正常收尾之后兜底
+    window.addEventListener('pointercancel', () => setTimeout(() => abortAllDrags(false), 0));
+    window.addEventListener('touchend', () => setTimeout(() => abortAllDrags(false), 0));
     /* 挂在 window 上：指针在容器外松开也能正常收尾 */
     window.addEventListener('pointermove', each((i, e) => i.onMove(e)), { passive: false });
     window.addEventListener('pointerup', each((i, e) => i.onUp(e)));
@@ -1504,10 +1902,12 @@
   }
 
   /* 把所有残留的拖动状态清干净（浮起的卡片、占位符、body 上的锁） */
-  function abortAllDrags() {
+  function abortAllDrags(withPending) {
     let any = false;
+    let released = false;
     for (let i = SORT_LIVE.length - 1; i >= 0; i -= 1) {
       const inst = SORT_LIVE[i];
+      if (withPending && inst.cancelPending && inst.cancelPending()) released = true;
       if (!inst.container.isConnected) { SORT_LIVE.splice(i, 1); continue; }
       if (inst.hasDrag && inst.hasDrag()) { inst.cancel(); any = true; }
     }
@@ -1515,7 +1915,7 @@
     document.querySelectorAll('.sort-ph').forEach((p) => p.remove());
     document.querySelectorAll('body > .is-sorting').forEach((el) => el.remove());
     document.body.classList.remove('is-dragging');
-    if (any) flushPendingRender();
+    if (any || released) flushPendingRender();
   }
 
   function makeSortable(container, opts) {
@@ -1557,7 +1957,6 @@
       el.style.left = rect.left + 'px';
       el.style.top = rect.top + 'px';
       drag = { el, ph, offsetY: e.clientY - rect.top, pointerId: e.pointerId, start: listItems().map(keyOf) };
-      sortActive += 1;
       /* 指针捕获挂在容器上（卡片已被移到 body，捕获会被丢掉）：
        * 这样指针跑到窗口外再松开，pointerup 也还能收到。 */
       try { if (container.setPointerCapture) container.setPointerCapture(e.pointerId); } catch (err) { /* 忽略 */ }
@@ -1614,6 +2013,7 @@
       if (!el) return;
       clearTimeout(timer);
       down = { el, x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+      sortActive += 1;              // 从按下起就锁住重绘，别在拖动真正开始前把条目换掉
       if (e.pointerType !== 'mouse') {
         /* 触屏：长按 320ms 后才进入拖动，避开页面滚动 */
         timer = setTimeout(() => {
@@ -1631,7 +2031,11 @@
       if (down && !drag && e.pointerId === down.pointerId) {
         if (Math.abs(e.clientY - down.y) < 6 && Math.abs(e.clientX - down.x) < 6) return;
         clearTimeout(timer);
-        if (e.pointerType !== 'mouse') { down = null; return; } // 先滑动了：交给页面滚动
+        if (e.pointerType !== 'mouse') {          // 先滑动了：交给页面滚动
+          down = null;
+          if (sortActive > 0) sortActive -= 1;
+          return;
+        }
         const d = down;
         down = null;
         startDrag(e, d.el);
@@ -1644,7 +2048,10 @@
 
     function onUp(e) {
       clearTimeout(timer);
-      if (down && e.pointerId === down.pointerId) down = null;
+      if (down && e.pointerId === down.pointerId) {
+        down = null;
+        if (sortActive > 0) sortActive -= 1;
+      }
       if (drag && e.pointerId === drag.pointerId) finish();
     }
     function onTouchMove(e) { if (drag && e.cancelable) e.preventDefault(); }
@@ -1652,7 +2059,16 @@
     for (let i = SORT_LIVE.length - 1; i >= 0; i -= 1) {
       if (SORT_LIVE[i].container === container) SORT_LIVE.splice(i, 1); // 同一容器不重复绑定
     }
-    SORT_LIVE.push({ container, onMove, onUp, onTouchMove, cancel, hasDrag: () => !!drag });
+    SORT_LIVE.push({
+      container, onMove, onUp, onTouchMove, cancel,
+      cancelPending: () => {
+        if (!down) return false;
+        down = null;
+        if (sortActive > 0) sortActive -= 1;
+        return true;
+      },
+      hasDrag: () => !!drag
+    });
 
     container.addEventListener('pointerdown', onDown);
     container.addEventListener('dragstart', (e) => e.preventDefault()); // 关掉浏览器原生拖拽
@@ -1979,6 +2395,34 @@
         const s = document.getElementById('memo-state');
         if (s && !memoState[tab].dirty) s.textContent = memoStamp(tab);
       });
+      mt.addEventListener('paste', (e) => {
+        const txt = (e.clipboardData || window.clipboardData || {}).getData
+          ? (e.clipboardData || window.clipboardData).getData('text/plain') : '';
+        if (txt == null) return;
+        e.preventDefault();
+        document.execCommand('insertText', false, String(txt).replace(/\r\n?/g, '\n'));
+      });
+      mt.addEventListener('keyup', rememberMemoSelection);
+      mt.addEventListener('mouseup', rememberMemoSelection);
+    }
+    const toolbar = $('#memo-toolbar');
+    if (toolbar && MEMOS[current]) {
+      const tab = current;
+      toolbar.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button[data-memo-cmd]')) e.preventDefault();
+      });
+      toolbar.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-memo-cmd]');
+        if (!btn) return;
+        applyMemoCommand(tab, btn.dataset.memoCmd, null);
+      });
+      toolbar.querySelectorAll('select[data-memo-select]').forEach((sel) => {
+        sel.addEventListener('change', () => {
+          if (!sel.value) return;
+          applyMemoCommand(tab, sel.dataset.memoSelect, sel.value);
+          sel.value = '';
+        });
+      });
     }
     const autoGrow = (el) => {
       el.style.height = 'auto';
@@ -1998,9 +2442,9 @@
       tAdd.addEventListener('click', () => {
         const due = ($('#memo-timer-date') || {}).value;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(due || '')) return toast('先选一个日期');
-        const ta = document.getElementById('memo-text');
-        const text = ta ? ta.value : memoTextNow(tab);
-        const line = Core.lineIndexAt(text, ta ? ta.selectionStart : text.length);
+        const ed = document.getElementById('memo-text');
+        const text = ed ? memoEditorPlain(ed) : memoTextNow(tab);
+        const line = ed ? memoCaretLine(ed) : Math.max(0, text.split('\n').length - 1);
         applyMemoText(tab, Core.setLineTimer(text, line, due));
         toast('第 ' + (line + 1) + ' 行已加倒计时 · ' + Core.fmtLeft(Core.dayDiff(today(), due)));
       });
@@ -2178,6 +2622,7 @@
   });
 
   document.addEventListener('click', onViewClick);
+  document.addEventListener('selectionchange', rememberMemoSelection);
   /* 星期按钮：点一下切换高亮（值本身由 checkbox 负责） */
   document.addEventListener('change', (e) => {
     const input = e.target;

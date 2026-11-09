@@ -698,6 +698,9 @@
           '</div>' +
         '</div>';
     }).join('');
+    /* 编辑第四周时，编辑框贴在页面最底部，原生日期选择器向下弹会被屏幕截掉。
+     * 留一段空白让页面还能往上滚，配合打开时自动滚动把编辑框放到视口中上部。 */
+    const editRoom = monthState.rangeEdit != null ? '<div class="ms-scroll-room" aria-hidden="true"></div>' : '';
     return '<section class="card month-cal-card">' +
         '<h3>本月日历 <span class="cnt">' + meta.days + ' 天</span></h3>' +
         calendarHTML(weeks) +
@@ -706,7 +709,7 @@
         '<h3>本月排期 <span class="cnt">四周</span></h3>' +
         '<p class="hint tight">点周次后面的 ✎ 可以改这一周的范围，日历上的色块会跟着变；右边每行随便写，停手约 1 秒自动保存并同步三端。</p>' +
         '<div class="ms-table">' + rows + '</div>' +
-      '</section>';
+      '</section>' + editRoom;
   }
 
   /* ---------- 备忘录（琐事 / 创意）：一整张纸，随便写、随时改 ---------- */
@@ -2130,6 +2133,17 @@
         flushMonth();
         monthState.rangeEdit = Number(act.dataset.week);
         render();
+        /* 第四周贴在页面底部，原生日期选择器会向下弹而被屏幕截断。
+         * 等编辑框渲染完成后，把它滚到视口中上部，给选择器留足展开空间。 */
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const el = document.querySelector('[data-ms-editor="' + monthState.rangeEdit + '"]');
+            if (!el) return;
+            const y = el.getBoundingClientRect().top + window.scrollY -
+              Math.max(80, window.innerHeight * 0.18);
+            window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+          });
+        });
         return;
       }
       if (action === 'month-range-cancel') {

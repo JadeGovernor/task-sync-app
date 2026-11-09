@@ -146,6 +146,19 @@ await ev(`document.querySelector('[data-action="month-range-cancel"]').click()`)
 await wait(300);
 ok('6c 取消后编辑器收起', (await ev(`!!document.querySelector('[data-ms-editor="1"]')`))===false);
 
+/* --- 6d) 第四周贴底时，编辑框仍完整滚进视口，日期选择器有空间展开 --- */
+await ev(`document.querySelector('.ms-pencil[data-week="3"]').click()`);
+await wait(900);
+const fourth=await ev(`(()=>{const e=document.querySelector('[data-ms-editor="3"]');
+  if(!e)return null;const r=e.getBoundingClientRect();
+  return {top:Math.round(r.top),bottom:Math.round(r.bottom),vh:innerHeight,
+    room:!!document.querySelector('.ms-scroll-room'),y:Math.round(scrollY)}})()`);
+ok('6d 第四周编辑框完整落在屏幕内', fourth && fourth.top>=0 && fourth.bottom<=fourth.vh, fourth);
+ok('6e 编辑时页面底部留有滚动空间', fourth && fourth.room===true, fourth);
+await ev(`document.querySelector('[data-action="month-range-cancel"]').click()`);
+await wait(300);
+ok('6f 第四周取消后编辑器收起', (await ev(`!!document.querySelector('[data-ms-editor="3"]')`))===false);
+
 /* --- 7) 刷新后数据还在 --- */
 await load(URL_);await wait(1800);
 await goTab('month');await wait(500);
@@ -154,6 +167,24 @@ ok('7a 刷新后排期正文还在', String(reloaded).indexOf('第二周：把�
 const reloadedRange=await ev(`document.querySelectorAll('.ms-row .ms-range')[1].textContent`);
 ok('7b 刷新后改过的范围还在', String(reloadedRange).indexOf(Number(newStart.slice(5,7))+'.'+Number(newStart.slice(8)))>=0, reloadedRange);
 ok('7c 全程无 JS 报错', errors.length===0, errors.slice(0,2));
+
+/* --- 8) 手机宽度下第四周编辑框也能完整进入视口 --- */
+await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:2,mobile:true});
+await load(URL_);await wait(1800);
+await goTab('month');await wait(500);
+await ev(`document.querySelector('.ms-pencil[data-week="3"]').click()`);
+await wait(1000);
+const fourthMobile=await ev(`(()=>{const e=document.querySelector('[data-ms-editor="3"]');
+  if(!e)return null;const r=e.getBoundingClientRect();
+  return {top:Math.round(r.top),bottom:Math.round(r.bottom),vh:innerHeight,
+    room:!!document.querySelector('.ms-scroll-room'),w:innerWidth}})()`);
+ok('8a 手机宽度下第四周编辑框完整可见', fourthMobile && fourthMobile.w===390 &&
+  fourthMobile.top>=0 && fourthMobile.bottom<=fourthMobile.vh, fourthMobile);
+ok('8b 手机宽度下编辑框滚到了中上部', fourthMobile && fourthMobile.top<fourthMobile.vh*0.45, fourthMobile);
+await ev(`document.querySelector('[data-action="month-range-cancel"]').click()`);
+await wait(300);
+ok('8c 手机宽度下取消正常', (await ev(`!!document.querySelector('[data-ms-editor="3"]')`))===false);
+await send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
 
 await dump();
 process.exit(R.every(r=>r.pass)?0:1);

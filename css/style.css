@@ -753,6 +753,8 @@ input.timer-date { width: auto; max-width: 150px; padding: 4px 6px; font-size: 1
 .ms-range-editor label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
 .ms-range-editor input[type=date] { width: auto; padding: 6px 8px; font-size: 13px; }
 .ms-editor-actions { display: flex; gap: 6px; }
+/* 编辑周范围时在页面底部留白，让第四周也能滚上来，日期选择器不会被屏幕截断。 */
+.ms-scroll-room { height: 70vh; min-height: 320px; }
 
 @media (max-width: 430px) {
   .mc-top { flex-direction: column; gap: 6px; }
@@ -772,4 +774,5 @@ input.timer-date { width: auto; max-width: 150px; padding: 4px 6px; font-size: 1
   .ms-range-editor { flex-direction: column; align-items: stretch; }
   .ms-range-editor input[type=date] { width: 100%; }
   .ms-editor-actions .btn { flex: 1 1 auto; }
+  .ms-scroll-room { height: 80vh; min-height: 300px; }
 }

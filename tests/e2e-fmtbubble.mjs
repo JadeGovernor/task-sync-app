@@ -106,6 +106,13 @@ s=await fmtState();
 ok('2g B 只加粗不改字号', s.tag==='P'&&s.size===smallSize&&Number.parseInt(s.weight,10)>=600, s);
 ok('2h B 不会留下多余字号标签', s.fonts===0, s);
 
+await clickPreset('bold');
+s=await fmtState();
+ok('2i 已加粗再点 B 会取消加粗', s.tag==='P'&&s.size===smallSize&&Number.parseInt(s.weight,10)<600, s);
+await clickPreset('bold');
+s=await fmtState();
+ok('2j 再点一次 B 又恢复加粗', s.tag==='P'&&s.size===smallSize&&Number.parseInt(s.weight,10)>=600, s);
+
 for(let i=0;i<6;i++){
   await clickPreset('large');
   await clickPreset('medium');

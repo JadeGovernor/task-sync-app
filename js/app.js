@@ -1325,10 +1325,11 @@
       }
     }
   }
+  function boldState() {
+    try { return !!document.queryCommandState('bold'); } catch (err) { return false; }
+  }
   function setBoldState(want) {
-    const on = (() => {
-      try { return !!document.queryCommandState('bold'); } catch (err) { return false; }
-    })();
+    const on = boldState();
     if (on !== !!want) document.execCommand('bold', false, null);
   }
   function markPresetSelection(ed) {
@@ -1397,7 +1398,7 @@
           if (next) stripPresetInline(next, true);
         });
       } else if (preset === 'bold') {
-        setBoldState(true);
+        setBoldState(!boldState());
       }
     } catch (err) { /* 老浏览器不支持某个命令时保持原文 */ }
     restorePresetSelection(marks);

@@ -84,7 +84,7 @@ ok('1c 顺序＝已拖延 → 紧急 → 正常', String(await ev(boardOrder))==
 ok('1d 标了「已拖延 2 天未完成」', (await ev(`document.querySelector('#plan-board .item-card[data-id="p_over"]').textContent.includes('已拖延 2 天未完成')`))===true,
   await ev(`document.querySelector('#plan-board .item-card[data-id="p_over"]').textContent`));
 ok('1e 不是已完成的样式（未打勾、可操作）', (await ev(`!!document.querySelector('#plan-board .item-card[data-id="p_over"] [data-action="plan-done"]')`))===true);
-ok('1f 计划徽标把它算进「进行中」（2 条 + 1 条而已拖延 = 3）', (await ev(badge('plan')))===3, await ev(badge('plan')));
+ok('1f 项目导航已不显示徽标', (await ev(badge('plan')))===0, await ev(badge('plan')));
 ok('1g 今日页也能看到它，且带同样标记', (await ev(`(()=>{const v=document.querySelector('#view').textContent;
   return v.includes('过了截止还没做完的计划')&&v.includes('已拖延 2 天未完成')})()`))===true);
 

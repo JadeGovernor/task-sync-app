@@ -1263,7 +1263,20 @@ input.timer-date { width: auto; max-width: 150px; padding: 4px 6px; font-size: 1
   color: var(--ng-ink);
   box-shadow: 0 1px 3px rgba(15,23,42,.08);
 }
-.nav-today { padding: 8px 15px; font-weight: 650; }
+.nav-today {
+  padding: 8px 15px;
+  border-color: #e9d5ff;
+  background: #faf5ff;
+  color: #7e22ce;
+  font-weight: 650;
+}
+.nav-today:hover { border-color: #d8b4fe; background: #f3e8ff; color: #6b21a8; }
+.nav-today.active {
+  border-color: #d8b4fe;
+  background: #ede9fe;
+  color: #6d28d9;
+  box-shadow: 0 1px 3px rgba(109,40,217,.12);
+}
 .nav-more { position: relative; flex: none; }
 .nav-more-btn {
   border: 1px solid #cbd5e1;

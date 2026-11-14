@@ -3401,7 +3401,7 @@
         (loopDone.length ? doneGrid(loopDone.map((e) => loopRow(e, true))) : '')
       : emptyLine('今天没有循环任务。', 'loop', '去循环页');
 
-    const habitAll = itemOfKind('habit').map((item) => {
+    const habitAll = itemOfKind('habit').filter((item) => item.freq === 'daily').map((item) => {
       const st = Core.habitOn(item, d, checkins());
       if (!st) return null;
       const missed = item.freq === 'daily' && Core.dailyScheduledOn(item, Core.shiftDate(d, -1)) &&
@@ -3656,6 +3656,8 @@
     ['keep', '习惯'], ['month', '排期'], ['memo', '琐事'], ['idea', '点子'],
     ['eff', '效率'], ['settings', '设置']
   ];
+  const NAV_HIDE_BADGES = new Set(['plan', 'disc', 'today']);
+  const navBadge = (id, badges) => NAV_HIDE_BADGES.has(id) ? 0 : (badges[id] || 0);
   function navGroupHTML(group, badges) {
     const active = group.tabs.some((t) => t[0] === current);
     const open = navGroupOpen === group.id;
@@ -3664,17 +3666,17 @@
         group.label + '<span class="nav-caret">▾</span>' +
       '</button>' +
       '<div class="nav-subtabs">' +
-        group.tabs.map((t) => tabBtn(t[0], t[1], badges[t[0]] || 0, ' nav-subtab')).join('') +
+        group.tabs.map((t) => tabBtn(t[0], t[1], navBadge(t[0], badges), ' nav-subtab')).join('') +
       '</div></div>';
   }
   function navHTML(badges) {
     const more = '<div class="nav-more' + (navMoreOpen ? ' is-open' : '') + '">' +
       '<button class="nav-more-btn" type="button" data-nav-more="1">更多<span class="nav-caret">▾</span></button>' +
       '<div class="nav-more-menu' + (navMoreOpen ? '' : ' hidden') + '" role="menu">' +
-        LEGACY_TABS.map((t) => tabBtn(t[0], t[1], badges[t[0]] || 0, ' nav-legacy-tab')).join('') +
+        LEGACY_TABS.map((t) => tabBtn(t[0], t[1], navBadge(t[0], badges), ' nav-legacy-tab')).join('') +
       '</div></div>';
     return NAV_GROUPS.map((g) => navGroupHTML(g, badges)).join('') +
-      tabBtn('today', '今日', badges.today || 0, ' nav-today') + more;
+      tabBtn('today', '今日', navBadge('today', badges), ' nav-today') + more;
   }
   function render() {
     if (sortActive > 0) { pendingRender = true; return; }   // 拖动中重建 DOM 会把手上那张卡片变成孤儿

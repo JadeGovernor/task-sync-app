@@ -1,4 +1,4 @@
-/* v54：分层导航、日历、日程七天纸、今日四块提醒、富文本提醒统一进今日顶部 */
+/* v55：分层导航、日历、日程七天纸、今日四块提醒、富文本提醒统一进今日顶部 */
 const CDP = 'http://127.0.0.1:9334';
 const ORIGIN = 'http://127.0.0.1:8123';
 const URL_ = ORIGIN + '/index.html?v=' + Date.now();
@@ -173,6 +173,19 @@ const nav = await ev(`(() => ({
 ok('1a 三个分组按 创意层/计划层/行动层 排列',
   JSON.stringify(nav.groups) === JSON.stringify(['创意层', '计划层', '行动层']), nav.groups);
 ok('1b 分组后是今日和更多', /今日/.test(nav.today) && /更多/.test(nav.more), nav);
+const navBadges = await ev(`(() => ({
+  today: !!document.querySelector('.nav-today i'),
+  plan: !!document.querySelector('.nav-subtab[data-tab="plan"] i'),
+  disc: !!document.querySelector('.nav-subtab[data-tab="disc"] i')
+}))()`);
+ok('1b1 今日/项目/打卡导航角标已移除',
+  !navBadges.today && !navBadges.plan && !navBadges.disc, navBadges);
+const todayStyle = await ev(`(() => {
+  const s = getComputedStyle(document.querySelector('.nav-today'));
+  return { bg: s.backgroundColor, border: s.borderColor, color: s.color };
+})()`);
+ok('1b1b 今日导航有独立紫色样式', todayStyle.bg !== 'rgba(0, 0, 0, 0)' &&
+  todayStyle.border !== 'rgba(0, 0, 0, 0)', todayStyle);
 const groupStyle = await ev(`[...document.querySelectorAll('.nav-group')].map((g) => {
   const box = getComputedStyle(g);
   const main = getComputedStyle(g.querySelector('.nav-group-main'));
@@ -331,6 +344,9 @@ ok('6a 今日提醒在最顶部', /今日提醒/.test(todayOrder[0] || ''), toda
 ok('6b 之后依次是 循环/打卡/项目/日历',
   /今日循环/.test(todayOrder[1] || '') && /今日打卡/.test(todayOrder[2] || '') &&
   /近七天项目/.test(todayOrder[3] || '') && /近七周日历/.test(todayOrder[4] || ''), todayOrder);
+const todayHabits = await ev(`document.querySelector('#view').textContent`);
+ok('6b2 今日打卡只显示日打卡',
+  /每日喝水/.test(todayHabits) && !/每周整理/.test(todayHabits), todayHabits);
 ok('6c 旧的自律区块已从今日移除', !/自律/.test(await ev(`document.querySelector('#view').textContent`)));
 ok('6d 琐事提醒进入今日顶部', await ev(`!!document.querySelector('#today-timers [data-src-key="memo:memo"]')`));
 ok('6e 日程提醒进入今日顶部', await ev(`!!document.querySelector('#today-timers [data-src-key="day:${dates.t}"]')`));

@@ -65,7 +65,7 @@ const badge=(k)=>`(()=>{const t=document.querySelector('.tab[data-tab="${k}"] i'
 
 /* --- 1) tab 徽标口径 --- */
 ok('1a 公司徽标 = 今日该做（逾期顺延 1 + 今天到期 1 = 2）', (await ev(badge('work')))===2, await ev(badge('work')));
-ok('1b 计划徽标 = 进行中 2 条', (await ev(badge('plan')))===2, await ev(badge('plan')));
+ok('1b 项目导航已不显示徽标', (await ev(badge('plan')))===0, await ev(badge('plan')));
 await goTab('work');
 ok('1c 公司页「今日」桶条数和徽标一致', (await ev(`document.querySelector('#work-board [data-bucket="today"] .cnt').textContent`))==='2',
   await ev(`document.querySelector('#work-board [data-bucket="today"] .cnt').textContent`));
@@ -84,7 +84,7 @@ const pB=await ev(`(()=>{const f=window.__mock.files()['tasks.json'];const it=f.
   return it?JSON.stringify({done:it.done,doneDate:it.doneDate}):'MISSING'})()`);
 ok('2d 打勾后云端里那条计划变成已完成（带完成日期）', pB===JSON.stringify({done:true,doneDate:shiftDays(0)}), pB);
 ok('2e 打勾后它从今日页消失', (await ev(`document.querySelector('#view').textContent.includes('进行中的计划B')`))===false);
-ok('2f 计划徽标同步减少', (await ev(badge('plan')))===1, await ev(badge('plan')));
+ok('2f 项目导航仍不显示徽标', (await ev(badge('plan')))===0, await ev(badge('plan')));
 await goTab('plan');
 ok('2g0 计划页「已完成」区计数 +1', (await ev(`(()=>{const c=document.querySelector('#view [data-action="done-fold"][data-scope="plan"] .cnt');
   return c?c.textContent:'(没有已完成区)'})()`))==='2 条',

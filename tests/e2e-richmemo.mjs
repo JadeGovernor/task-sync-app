@@ -100,6 +100,10 @@ await wait(200);
 
 await caretEndOfText('第三行正文');
 await ev(`document.querySelector('[data-memo-cmd="table"]').click()`);
+await wait(180);
+ok('2f0 表格按钮先打开行列选择器', await ev(`!!document.querySelector('.table-picker .table-picker-cell')`));
+await ev(`(()=>{const c=document.querySelector('.table-picker-cell[data-row="3"][data-col="3"]');
+  if(!c)return false;c.click();return true})()`);
 await wait(1300);
 
 ok('2a 标题变成 h2', await ev(`!!document.querySelector('#memo-text h2')`));

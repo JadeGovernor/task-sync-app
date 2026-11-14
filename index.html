@@ -6,10 +6,10 @@
   <title>效率任务 · 三端同步</title>
   <meta name="description" content="今日聚合 + 公司/计划/自律/习惯/琐事/效率，Mac + iPhone 三端同步" />
   <meta name="theme-color" content="#0f172a" />
-  <link rel="manifest" href="./manifest.webmanifest?v=43" />
+  <link rel="manifest" href="./manifest.webmanifest?v=50" />
   <link rel="icon" type="image/png" href="./icons/icon-192.png" />
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
-  <link rel="stylesheet" href="./css/style.css?v=43" />
+  <link rel="stylesheet" href="./css/style.css?v=50" />
 </head>
 <body>
   <header class="topbar">
@@ -111,6 +111,53 @@
     </div>
   </div>
 
+  <!-- 流程图：左侧椭圆节点，画布内可拖动节点、拉箭头连接 -->
+  <div id="flow-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="flow-title">
+    <div class="modal flow-modal">
+      <div class="flow-modal-head">
+        <div>
+          <h2 id="flow-title">流程图</h2>
+          <p class="hint">点左侧椭圆添加节点；在椭圆边缘按住拖到另一个椭圆即可连线。</p>
+        </div>
+        <button class="flow-close" type="button" data-flow-close="1" aria-label="关闭流程图">✕</button>
+      </div>
+      <div class="flow-body">
+        <aside class="flow-palette" aria-label="流程图工具">
+          <span class="flow-palette-label">形状</span>
+          <button class="flow-add-node" type="button" data-flow-add="1" title="添加一个椭圆节点">
+            <span class="flow-add-oval">椭圆</span>
+          </button>
+          <p class="flow-palette-hint">节点可拖动；右侧圆点或椭圆边缘都能拉箭头。</p>
+          <button id="flow-delete-node" class="btn btn-sm btn-danger" type="button" disabled>删除选中</button>
+        </aside>
+        <div id="flow-canvas-wrap" class="flow-canvas-wrap">
+          <div id="flow-canvas" class="flow-canvas">
+            <svg id="flow-svg" class="flow-svg" viewBox="0 0 900 560" aria-hidden="true">
+              <defs>
+                <marker id="flow-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L8,4 L0,8 Z" fill="#64748b"></path>
+                </marker>
+                <marker id="flow-arrow-temp" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L8,4 L0,8 Z" fill="#2563eb"></path>
+                </marker>
+              </defs>
+              <g id="flow-edge-layer"></g>
+              <path id="flow-temp-edge" class="flow-temp-edge hidden"></path>
+            </svg>
+            <div id="flow-node-layer" class="flow-node-layer"></div>
+            <div id="flow-empty" class="flow-empty">点左侧“椭圆”开始</div>
+          </div>
+        </div>
+      </div>
+      <div class="flow-modal-actions">
+        <span id="flow-hint" class="hint">箭头从一个椭圆拖到另一个椭圆上松手。</span>
+        <span class="spacer"></span>
+        <button class="btn" type="button" data-flow-close="1">取消</button>
+        <button id="flow-save" class="btn btn-primary" type="button">保存到白纸</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
   <div id="fmt-bubble" class="fmt-bubble hidden" aria-hidden="true">
     <button class="fmt-trigger" type="button" title="文字格式" aria-label="文字格式">＋</button>
@@ -122,9 +169,9 @@
     </div>
   </div>
 
-  <script src="./js/config.js?v=43"></script>
-  <script src="./js/core.js?v=43"></script>
-  <script src="./js/store.js?v=43"></script>
-  <script src="./js/app.js?v=43"></script>
+  <script src="./js/config.js?v=50"></script>
+  <script src="./js/core.js?v=50"></script>
+  <script src="./js/store.js?v=50"></script>
+  <script src="./js/app.js?v=50"></script>
 </body>
 </html>

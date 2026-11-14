@@ -779,7 +779,7 @@
     const text = st.draft != null ? st.draft : (base && typeof base.memo === 'string' ? base.memo : '');
     const html = st.html != null ? st.html : (memoHtmlForItem(base, text) || memoTextToHtml(text));
     const cleanHtml = sanitizeMemoHtml(html);
-    const empty = !String(text || '').trim() && !/<(?:table|hr)\b/i.test(cleanHtml);
+    const empty = !String(text || '').trim() && !memoHtmlHasContent(cleanHtml);
     const ph = key === MONTH_NOTE_KIND
       ? '把所有想做的事先写在这里，再从里面挑出这个月要推进的，填到上面的排期里…'
       : '写这一周的进展、问题、下周安排…';
@@ -940,8 +940,9 @@
     'DIV', 'P', 'BR', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE',
     'SPAN', 'FONT', 'H2', 'H3', 'H4', 'UL', 'OL', 'LI', 'BLOCKQUOTE',
     'PRE', 'CODE', 'HR', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR',
-    'TH', 'TD', 'CAPTION', 'COLGROUP', 'COL'
+    'TH', 'TD', 'CAPTION', 'COLGROUP', 'COL', 'IMG'
   ]);
+  const MEMO_IMAGE_DATA_LIMIT = 220000;
   const MEMO_ALLOWED_STYLE = new Set([
     'color', 'background-color', 'font-size', 'font-weight', 'font-style',
     'text-decoration', 'text-align'
@@ -997,8 +998,26 @@
           if (tag === 'FONT' && name === 'size' && /^[2-5]$/.test(attr.value)) return;
           if ((tag === 'TD' || tag === 'TH') && (name === 'colspan' || name === 'rowspan') &&
               /^[1-9]\d?$/.test(attr.value)) return;
+          if (tag === 'IMG' && name === 'src' &&
+              /^data:image\/(?:png|jpe?g|webp);base64,[a-z0-9+/=]+$/i.test(attr.value) &&
+              attr.value.length <= MEMO_IMAGE_DATA_LIMIT) return;
+          if (tag === 'IMG' && name === 'alt') {
+            node.setAttribute('alt', String(attr.value || '').slice(0, 120));
+            return;
+          }
+          if (tag === 'DIV' && name === 'data-flow' &&
+              /^[a-z0-9_-]{4,200000}$/i.test(attr.value)) return;
           node.removeAttribute(attr.name);
         });
+        if (tag === 'IMG') {
+          if (!node.getAttribute('src')) node.remove();
+          return;
+        }
+        if (tag === 'DIV' && node.hasAttribute('data-flow')) {
+          /* 流程图只存压缩后的节点/连线数据；显示层每次从 data-flow 重新画，避免保存两份。 */
+          node.textContent = '';
+          return;
+        }
         if (tag === 'FONT' && !node.getAttribute('size')) {
           const kids = Array.from(node.childNodes);
           if (kids.length) node.replaceWith.apply(node, kids);
@@ -1016,6 +1035,9 @@
     };
     walk(tpl.content);
     return tpl.innerHTML;
+  }
+  function memoHtmlHasContent(html) {
+    return /<(?:table|hr|img)\b|data-flow=/i.test(String(html || ''));
   }
   function memoLineHtml(line) {
     const s = String(line == null ? '' : line);
@@ -1044,6 +1066,18 @@
       if (node.nodeType !== 1) return;
       const tag = node.tagName.toUpperCase();
       if (tag === 'BR') { out += '\n'; return; }
+      if (node.hasAttribute('data-flow')) {
+        cut();
+        out += '[流程图]';
+        cut();
+        return;
+      }
+      if (tag === 'IMG') {
+        cut();
+        out += '[图片]';
+        cut();
+        return;
+      }
       if (tag === 'TABLE') {
         cut();
         out += memoTableSummary(node);
@@ -1180,7 +1214,8 @@
   function memoSetEditor(ed, html) {
     if (!ed) return;
     ed.innerHTML = sanitizeMemoHtml(html);
-    const has = !!(ed.textContent || '').trim() || !!ed.querySelector('table,hr');
+    hydrateFlowFigures(ed);
+    const has = !!(ed.textContent || '').trim() || !!ed.querySelector('table,hr,img,[data-flow]');
     ed.classList.toggle('is-empty', !has);
   }
   function memoCaretLine(ed) {
@@ -1279,6 +1314,58 @@
     let node = sel.anchorNode;
     while (node && node.parentNode !== ed) node = node.parentNode;
     return node && node.nodeType === 1 ? [node] : [];
+  }
+  /* 空编辑器里直接敲第一行时，浏览器会把文字留成编辑器的直接文本节点；
+   * 后面的换行才是 <div>。先把这个行内片段包成块，段落格式才能作用到首行。 */
+  function normalizePresetRoot(ed) {
+    if (!ed) return;
+    const sel = window.getSelection();
+    const saved = sel && sel.rangeCount && ed.contains(sel.anchorNode) && ed.contains(sel.focusNode)
+      ? {
+          start: sel.getRangeAt(0).startContainer,
+          startOffset: sel.getRangeAt(0).startOffset,
+          end: sel.getRangeAt(0).endContainer,
+          endOffset: sel.getRangeAt(0).endOffset
+        }
+      : null;
+    let run = [];
+    const flush = () => {
+      if (!run.length) return;
+      const meaningful = run.some((node) =>
+        node.nodeType !== 3 || String(node.nodeValue || '').trim()
+      );
+      if (!meaningful) {
+        run.forEach((node) => node.remove());
+        run = [];
+        return;
+      }
+      const block = document.createElement('div');
+      run[0].before(block);
+      run.forEach((node) => block.appendChild(node));
+      run = [];
+    };
+    Array.from(ed.childNodes).forEach((node) => {
+      if (node.nodeType === 1 && MEMO_LINE_BLOCKS.has(node.tagName)) {
+        flush();
+        return;
+      }
+      run.push(node);
+    });
+    flush();
+    if (!saved || !ed.contains(saved.start) || !ed.contains(saved.end)) return;
+    const clamp = (node, offset) => Math.min(
+      offset,
+      node.nodeType === 3 ? String(node.nodeValue || '').length : node.childNodes.length
+    );
+    try {
+      const range = document.createRange();
+      range.setStart(saved.start, clamp(saved.start, saved.startOffset));
+      range.setEnd(saved.end, clamp(saved.end, saved.endOffset));
+      if (!range.collapsed) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } catch (err) { /* 节点在包装时被浏览器重建，就保留当前选区 */ }
   }
   function unwrapElement(el) {
     const parent = el.parentNode;
@@ -1384,10 +1471,12 @@
     const ed = fmtMenuEditor && document.getElementById(fmtMenuEditor.id);
     if (!ed || !ed.isConnected) { hideFmtBubble(); return; }
     restoreRichSelection(ed);
+    const blockPreset = preset === 'large' || preset === 'medium' || preset === 'small';
+    if (blockPreset) normalizePresetRoot(ed);
     const marks = markPresetSelection(ed);
     try {
       document.execCommand('styleWithCSS', false, true);
-      if (preset === 'large' || preset === 'medium' || preset === 'small') {
+      if (blockPreset) {
         const tag = preset === 'large' ? 'H2' : preset === 'medium' ? 'H3' : 'P';
         /* 段落格式直接改块节点，不交给 execCommand('formatBlock')。
          * 后者在「普通段落切成标题、再切回来」时偶发折叠选区，
@@ -1427,37 +1516,252 @@
       if (!bubble.classList.contains('hidden')) scheduleFmtBubble();
     });
   }
-  function memoTableHtml() {
-    const cell = (tag) => '<' + tag + '><br></' + tag + '>';
-    return '<table><tbody>' +
-      '<tr><th>列 1</th><th>列 2</th><th>列 3</th></tr>' +
-      '<tr>' + cell('td') + cell('td') + cell('td') + '</tr>' +
-      '<tr>' + cell('td') + cell('td') + cell('td') + '</tr>' +
-      '</tbody></table>';
+  function richRootBlock(ed) {
+    const sel = window.getSelection();
+    if (!ed || !sel || !sel.rangeCount || !sel.anchorNode || !ed.contains(sel.anchorNode)) return null;
+    let node = sel.anchorNode;
+    while (node && node.parentNode !== ed) node = node.parentNode;
+    return node && node.nodeType === 1 && MEMO_LINE_BLOCKS.has(node.tagName) ? node : null;
   }
-  function insertMemoTable(ed) {
+  function placeCaretIn(el, atStart) {
+    if (!el) return;
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.setStart(el, atStart === false ? el.childNodes.length : 0);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  function insertRootBlock(ed, block, spacer) {
+    normalizePresetRoot(ed);
+    const current = richRootBlock(ed);
+    if (current) current.after(block);
+    else ed.appendChild(block);
+    if (spacer) block.after(spacer);
+    placeCaretIn(spacer || block, true);
+  }
+  function memoTableHtml(rows, cols) {
+    const rn = Math.max(1, Math.min(10, Number(rows) || 3));
+    const cn = Math.max(1, Math.min(10, Number(cols) || 3));
+    const cell = (tag) => '<' + tag + '><br></' + tag + '>';
+    let html = '<table><tbody><tr>';
+    for (let c = 0; c < cn; c += 1) html += '<th>列 ' + (c + 1) + '</th>';
+    html += '</tr>';
+    for (let r = 1; r < rn; r += 1) {
+      html += '<tr>';
+      for (let c = 0; c < cn; c += 1) html += cell('td');
+      html += '</tr>';
+    }
+    return html + '</tbody></table>';
+  }
+  function insertMemoTable(ed, rows, cols) {
     const sel = window.getSelection();
     const wrap = document.createElement('div');
-    wrap.innerHTML = memoTableHtml();
+    wrap.innerHTML = memoTableHtml(rows, cols);
+    const table = wrap.firstElementChild;
     const spacer = document.createElement('div');
     spacer.innerHTML = '<br>';
-    let node = sel && sel.rangeCount ? sel.anchorNode : null;
-    while (node && node.parentNode !== ed) node = node.parentNode;
-    let block = node && node.nodeType === 1 && MEMO_LINE_BLOCKS.has(node.tagName) ? node : null;
-    if (!block && node && node.previousElementSibling &&
-        MEMO_LINE_BLOCKS.has(node.previousElementSibling.tagName)) {
-      block = node.previousElementSibling;
+    insertRootBlock(ed, table, spacer);
+    const cell = table.querySelector('td,th');
+    if (cell) placeCaretIn(cell, true);
+  }
+
+  /* ---------- 表格尺寸选择器 ---------- */
+  let tablePickerEl = null;
+  let tablePickerKey = null;
+  function closeTablePicker() {
+    if (tablePickerEl) tablePickerEl.remove();
+    tablePickerEl = null;
+    if (tablePickerKey) document.removeEventListener('keydown', tablePickerKey, true);
+    tablePickerKey = null;
+  }
+  function openTablePicker(anchor, ed) {
+    closeTablePicker();
+    rememberRichSelection(ed);
+    const pop = document.createElement('div');
+    pop.className = 'table-picker';
+    pop.innerHTML = '<div class="table-picker-head"><span>插入表格</span>' +
+      '<span class="table-picker-size">3 × 3</span></div>' +
+      '<div class="table-picker-grid"></div>';
+    const grid = pop.querySelector('.table-picker-grid');
+    const size = pop.querySelector('.table-picker-size');
+    for (let r = 1; r <= 10; r += 1) {
+      for (let c = 1; c <= 10; c += 1) {
+        const cell = document.createElement('span');
+        cell.className = 'table-picker-cell' + (r <= 3 && c <= 3 ? ' on' : '');
+        cell.dataset.row = String(r);
+        cell.dataset.col = String(c);
+        grid.appendChild(cell);
+      }
     }
-    if (block) block.after(wrap, spacer);
-    else { ed.appendChild(wrap); ed.appendChild(spacer); }
-    const cell = wrap.querySelector('td,th');
-    if (cell && sel) {
-      const r = document.createRange();
-      r.setStart(cell, 0);
-      r.collapse(true);
+    const paint = (r, c) => {
+      size.textContent = r + ' × ' + c;
+      Array.from(grid.children).forEach((cell) => {
+        const on = Number(cell.dataset.row) <= r && Number(cell.dataset.col) <= c;
+        cell.classList.toggle('on', on);
+      });
+    };
+    grid.addEventListener('pointerover', (e) => {
+      const cell = e.target.closest('.table-picker-cell');
+      if (!cell) return;
+      paint(Number(cell.dataset.row), Number(cell.dataset.col));
+    });
+    pop.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    grid.addEventListener('click', (e) => {
+      const cell = e.target.closest('.table-picker-cell');
+      if (!cell) return;
+      const rows = Number(cell.dataset.row);
+      const cols = Number(cell.dataset.col);
+      closeTablePicker();
+      restoreRichSelection(ed);
+      insertMemoTable(ed, rows, cols);
+      rememberRichSelection(ed);
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    document.body.appendChild(pop);
+    const rect = anchor.getBoundingClientRect();
+    const pr = pop.getBoundingClientRect();
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - pr.width - 8));
+    let top = rect.bottom + 7;
+    if (top + pr.height > window.innerHeight - 8) top = Math.max(8, rect.top - pr.height - 7);
+    pop.style.left = Math.round(left) + 'px';
+    pop.style.top = Math.round(top) + 'px';
+    tablePickerEl = pop;
+    tablePickerKey = (e) => {
+      if (e.key === 'Escape') closeTablePicker();
+    };
+    document.addEventListener('keydown', tablePickerKey, true);
+    setTimeout(() => {
+      const outside = (e) => {
+        if (tablePickerEl && !tablePickerEl.contains(e.target)) {
+          closeTablePicker();
+          document.removeEventListener('pointerdown', outside, true);
+        }
+      };
+      document.addEventListener('pointerdown', outside, true);
+    }, 0);
+  }
+
+  /* ---------- 图片粘贴：压缩后内嵌，三端随 memoHtml 同步 ---------- */
+  function blobDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('读取图片失败'));
+      reader.readAsDataURL(blob);
+    });
+  }
+  function loadImageEl(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('图片格式无法识别'));
+      img.src = src;
+    });
+  }
+  async function compressedImageData(file) {
+    const raw = await blobDataUrl(file);
+    const img = await loadImageEl(raw);
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    if (!w || !h) throw new Error('图片尺寸为空');
+    let maxSide = 1500;
+    let quality = .86;
+    let data = '';
+    for (let i = 0; i < 14; i += 1) {
+      const scale = Math.min(1, maxSide / Math.max(w, h));
+      const cw = Math.max(1, Math.round(w * scale));
+      const ch = Math.max(1, Math.round(h * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, cw, ch);
+      data = canvas.toDataURL('image/webp', quality);
+      if (!/^data:image\/webp/i.test(data)) data = canvas.toDataURL('image/jpeg', quality);
+      if (data.length <= MEMO_IMAGE_DATA_LIMIT) return data;
+      quality -= .1;
+      if (quality < .5) {
+        maxSide = Math.max(420, Math.round(maxSide * .78));
+        quality = .82;
+      }
+    }
+    throw new Error('图片太大，压缩后仍超过同步上限');
+  }
+  async function insertPastedImage(ed, file, savedRange) {
+    const data = await compressedImageData(file);
+    if (!ed || !ed.isConnected) throw new Error('编辑区已经刷新，请重新粘贴');
+    const sel = window.getSelection();
+    if (savedRange && sel && ed.contains(savedRange.commonAncestorContainer)) {
       sel.removeAllRanges();
-      sel.addRange(r);
+      sel.addRange(savedRange);
     }
+    const block = document.createElement('div');
+    const img = document.createElement('img');
+    img.src = data;
+    img.alt = '粘贴的图片';
+    block.appendChild(img);
+    const spacer = document.createElement('div');
+    spacer.innerHTML = '<br>';
+    insertRootBlock(ed, block, spacer);
+    ed.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  function bindRichPaste(ed) {
+    if (!ed) return;
+    ed.addEventListener('paste', async (e) => {
+      const cd = e.clipboardData || window.clipboardData;
+      if (!cd) return;
+      const items = Array.from(cd.items || []);
+      let file = null;
+      const imageItem = items.find((it) => it && it.kind === 'file' && /^image\//i.test(it.type || ''));
+      if (imageItem && imageItem.getAsFile) file = imageItem.getAsFile();
+      if (!file && cd.files) {
+        file = Array.from(cd.files).find((f) => /^image\//i.test(f.type || '')) || null;
+      }
+      if (file) {
+        e.preventDefault();
+        const sel = window.getSelection();
+        const saved = sel && sel.rangeCount && ed.contains(sel.anchorNode)
+          ? sel.getRangeAt(0).cloneRange() : null;
+        try {
+          await insertPastedImage(ed, file, saved);
+          toast('图片已插入并压缩，稍后自动同步');
+        } catch (err) {
+          toast('图片粘贴失败：' + (err.message || err), 4200);
+        }
+        return;
+      }
+      const txt = cd.getData ? cd.getData('text/plain') : '';
+      if (txt == null) return;
+      e.preventDefault();
+      document.execCommand('insertText', false, String(txt).replace(/\r\n?/g, '\n'));
+    });
+  }
+  function bindRichKeydown(ed) {
+    if (!ed) return;
+    ed.addEventListener('keydown', (e) => {
+      if (e.key !== 'Backspace' || e.isComposing) return;
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount || !sel.isCollapsed) return;
+      const block = richRootBlock(ed);
+      if (!block || block.tagName === 'TABLE') return;
+      const table = block.previousElementSibling;
+      if (!table || table.tagName !== 'TABLE') return;
+      if ((block.textContent || '').replace(/\u200b/g, '').trim()) return;
+      if (block.querySelector('img,table,hr,[data-flow]')) return;
+      e.preventDefault();
+      table.remove();
+      placeCaretIn(block, true);
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
+    });
   }
   function applyRichCommand(ed, cmd, value) {
     if (!ed) return;
@@ -1477,8 +1781,6 @@
       } else if (cmd === 'color') {
         document.execCommand('styleWithCSS', false, true);
         document.execCommand('foreColor', false, value || '#0f172a');
-      } else if (cmd === 'table') {
-        insertMemoTable(ed);
       } else if (cmd === 'clear') {
         document.execCommand('removeFormat', false, null);
         document.execCommand('formatBlock', false, 'P');
@@ -1494,6 +1796,15 @@
     toolbar.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-memo-cmd]');
       if (!btn) return;
+      if (btn.dataset.memoCmd === 'table') {
+        openTablePicker(btn, ed);
+        return;
+      }
+      if (btn.dataset.memoCmd === 'flow') {
+        rememberRichSelection(ed);
+        openFlowEditor(ed, null);
+        return;
+      }
       applyRichCommand(ed, btn.dataset.memoCmd, null);
       onChange();
     });
@@ -1505,6 +1816,454 @@
         onChange();
       });
     });
+  }
+
+  /* ---------- 流程图：可编辑画框 + 白纸内嵌块 ---------- */
+  const FLOW_W = 900;
+  const FLOW_H = 560;
+  const FLOW_NODE_W = 170;
+  const FLOW_NODE_H = 76;
+  let flowSession = null;
+  let flowSeq = 0;
+
+  function flowPack(data) {
+    const bytes = new TextEncoder().encode(JSON.stringify(data));
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+  function flowClean(raw) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const w = FLOW_W;
+    const h = FLOW_H;
+    const used = new Set();
+    const nodes = (Array.isArray(src.nodes) ? src.nodes : []).slice(0, 80).map((n, i) => {
+      let id = String(n && n.id || ('n' + i)).replace(/[^a-z0-9_-]/gi, '').slice(0, 40) || ('n' + i);
+      while (used.has(id)) id += '_';
+      used.add(id);
+      const x = Math.max(0, Math.min(w - FLOW_NODE_W, Number(n && n.x) || 0));
+      const y = Math.max(0, Math.min(h - FLOW_NODE_H, Number(n && n.y) || 0));
+      return {
+        id,
+        x: Math.round(x),
+        y: Math.round(y),
+        text: String(n && n.text == null ? '' : n.text).slice(0, 120)
+      };
+    });
+    const ids = new Set(nodes.map((n) => n.id));
+    const seen = new Set();
+    const edges = (Array.isArray(src.edges) ? src.edges : []).slice(0, 160).map((e) => ({
+      from: String(e && e.from || ''),
+      to: String(e && e.to || '')
+    })).filter((e) => {
+      if (!ids.has(e.from) || !ids.has(e.to) || e.from === e.to) return false;
+      const key = e.from + '>' + e.to;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return { w, h, nodes, edges };
+  }
+  function flowUnpack(packed) {
+    const s = String(packed || '').replace(/-/g, '+').replace(/_/g, '/');
+    if (!s) return null;
+    const pad = s.length % 4 ? '='.repeat(4 - (s.length % 4)) : '';
+    const bin = atob(s + pad);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    return flowClean(JSON.parse(new TextDecoder().decode(bytes)));
+  }
+  function flowCenter(n) {
+    return { x: n.x + FLOW_NODE_W / 2, y: n.y + FLOW_NODE_H / 2 };
+  }
+  function flowBoundary(n, tx, ty) {
+    const c = flowCenter(n);
+    const dx = tx - c.x;
+    const dy = ty - c.y;
+    if (!dx && !dy) return { x: c.x + FLOW_NODE_W / 2, y: c.y };
+    const rx = FLOW_NODE_W / 2;
+    const ry = FLOW_NODE_H / 2;
+    const t = 1 / Math.sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
+    return { x: c.x + dx * t, y: c.y + dy * t };
+  }
+  function flowEndpoints(a, b) {
+    const ca = flowCenter(a);
+    const cb = flowCenter(b);
+    return {
+      start: flowBoundary(a, cb.x, cb.y),
+      end: flowBoundary(b, ca.x, ca.y)
+    };
+  }
+  function flowSvgPath(a, b) {
+    const { start, end } = flowEndpoints(a, b);
+    const dx = end.x - start.x;
+    const bend = Math.max(44, Math.min(160, Math.abs(dx) * .45 || 70));
+    const sign = dx >= 0 ? 1 : -1;
+    return 'M' + start.x + ' ' + start.y +
+      ' C' + (start.x + sign * bend) + ' ' + start.y +
+      ', ' + (end.x - sign * bend) + ' ' + end.y +
+      ', ' + end.x + ' ' + end.y;
+  }
+  function flowFigureInner(data) {
+    const d = flowClean(data);
+    const head = '<div class="flow-figure-head">' +
+      '<span>流程图 · ' + d.nodes.length + ' 个节点</span>' +
+      '<span class="flow-figure-open">点击编辑</span>' +
+      '<button class="flow-figure-del" type="button" data-flow-del="1" title="从白纸删除流程图">✕</button>' +
+      '</div>';
+    if (!d.nodes.length) return head + '<div class="flow-empty">空流程图</div>';
+    const byId = new Map(d.nodes.map((n) => [n.id, n]));
+    const edges = d.edges.map((e) => {
+      const a = byId.get(e.from);
+      const b = byId.get(e.to);
+      if (!a || !b) return '';
+      const { start, end } = flowEndpoints(a, b);
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const len = Math.hypot(dx, dy);
+      const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+      return '<div class="flow-render-edge" style="left:' + (start.x / d.w * 100) +
+        '%;top:' + (start.y / d.h * 100) + '%;width:' + (len / d.w * 100) +
+        '%;transform:rotate(' + angle + 'deg)"></div>';
+    }).join('');
+    const nodes = d.nodes.map((n) =>
+      '<div class="flow-render-node" style="left:' + (n.x / d.w * 100) +
+      '%;top:' + (n.y / d.h * 100) + '%;width:' + (FLOW_NODE_W / d.w * 100) +
+      '%;height:' + (FLOW_NODE_H / d.h * 100) + '%">' + esc(n.text || '未命名') + '</div>'
+    ).join('');
+    return head + '<div class="flow-render-surface">' + edges + nodes + '</div>';
+  }
+  function hydrateFlowFigures(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    scope.querySelectorAll('.memo-editor [data-flow]').forEach((fig) => {
+      let data = null;
+      try { data = flowUnpack(fig.getAttribute('data-flow')); } catch (err) { data = null; }
+      if (!data || !data.nodes.length) return;
+      fig.classList.add('flow-figure');
+      fig.setAttribute('contenteditable', 'false');
+      fig.innerHTML = flowFigureInner(data);
+      const del = fig.querySelector('[data-flow-del]');
+      if (del) del.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const ed = fig.closest('.memo-editor');
+        fig.remove();
+        if (ed) ed.dispatchEvent(new Event('input', { bubbles: true }));
+        toast('流程图已删除');
+      });
+    });
+  }
+  function flowNodeEl(id) {
+    const layer = document.getElementById('flow-node-layer');
+    return layer ? layer.querySelector('[data-node-id="' + id + '"]') : null;
+  }
+  function flowDrawEdges() {
+    if (!flowSession) return;
+    const g = document.getElementById('flow-edge-layer');
+    if (!g) return;
+    const byId = new Map(flowSession.nodes.map((n) => [n.id, n]));
+    g.innerHTML = flowSession.edges.map((e) => {
+      const a = byId.get(e.from);
+      const b = byId.get(e.to);
+      return a && b ? '<path class="flow-edge" d="' + flowSvgPath(a, b) + '"></path>' : '';
+    }).join('');
+  }
+  function flowClearTemp() {
+    const p = document.getElementById('flow-temp-edge');
+    if (!p) return;
+    p.setAttribute('d', '');
+    p.classList.add('hidden');
+  }
+  function flowDrawTemp(fromId, point) {
+    if (!flowSession) return;
+    const n = flowSession.nodes.find((x) => x.id === fromId);
+    const p = document.getElementById('flow-temp-edge');
+    if (!n || !p) return;
+    const start = flowBoundary(n, point.x, point.y);
+    p.setAttribute('d', 'M' + start.x + ' ' + start.y + ' L' + point.x + ' ' + point.y);
+    p.classList.remove('hidden');
+  }
+  function flowSetDropTarget(id) {
+    if (!flowSession) return;
+    if (flowSession.hoverId === id) return;
+    if (flowSession.hoverId) {
+      const old = flowNodeEl(flowSession.hoverId);
+      if (old) old.classList.remove('is-drop-target');
+    }
+    flowSession.hoverId = id || null;
+    if (id) {
+      const el = flowNodeEl(id);
+      if (el) el.classList.add('is-drop-target');
+    }
+  }
+  function flowUpdateSelection() {
+    if (!flowSession) return;
+    const layer = document.getElementById('flow-node-layer');
+    if (layer) layer.querySelectorAll('.flow-node').forEach((el) => {
+      el.classList.toggle('selected', el.dataset.nodeId === flowSession.selectedId);
+    });
+    const del = document.getElementById('flow-delete-node');
+    if (del) del.disabled = !flowSession.selectedId;
+  }
+  function flowRenderEditor() {
+    if (!flowSession) return;
+    const layer = document.getElementById('flow-node-layer');
+    if (!layer) return;
+    layer.innerHTML = flowSession.nodes.map((n) =>
+      '<div class="flow-node" data-node-id="' + n.id + '" style="left:' + n.x + 'px;top:' + n.y + 'px">' +
+        '<input class="flow-node-input" type="text" maxlength="120" value="' + esc(n.text) + '" aria-label="椭圆内容" />' +
+        '<span class="flow-port" title="从这里拖箭头到另一个椭圆">→</span>' +
+      '</div>'
+    ).join('');
+    layer.querySelectorAll('.flow-node').forEach((el) => {
+      const n = flowSession.nodes.find((x) => x.id === el.dataset.nodeId);
+      const input = el.querySelector('.flow-node-input');
+      if (!n || !input) return;
+      input.addEventListener('input', () => { n.text = input.value; });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === 'Escape') {
+          e.preventDefault();
+          input.blur();
+        }
+      });
+    });
+    const empty = document.getElementById('flow-empty');
+    if (empty) empty.classList.toggle('hidden', flowSession.nodes.length > 0);
+    flowDrawEdges();
+    flowUpdateSelection();
+  }
+  function flowAddNode() {
+    if (!flowSession) return;
+    const slot = flowSession.nodes.length;
+    const narrow = window.innerWidth <= 700;
+    const col = narrow ? 0 : slot % 3;
+    const row = narrow ? slot : Math.floor(slot / 3) % 3;
+    const n = {
+      id: 'fn' + (++flowSeq) + Date.now().toString(36),
+      x: 74 + col * 248 + (narrow ? 0 : Math.floor(slot / 9) * 20),
+      y: 38 + row * (narrow ? 100 : 158) + (narrow ? 0 : Math.floor(slot / 9) * 20),
+      text: ''
+    };
+    n.x = Math.max(12, Math.min(FLOW_W - FLOW_NODE_W - 12, n.x));
+    n.y = Math.max(12, Math.min(FLOW_H - FLOW_NODE_H - 12, n.y));
+    flowSession.nodes.push(n);
+    flowSession.selectedId = n.id;
+    flowRenderEditor();
+    const input = flowNodeEl(n.id) && flowNodeEl(n.id).querySelector('.flow-node-input');
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }
+  function flowDeleteSelected() {
+    if (!flowSession || !flowSession.selectedId) return;
+    const id = flowSession.selectedId;
+    flowSession.nodes = flowSession.nodes.filter((n) => n.id !== id);
+    flowSession.edges = flowSession.edges.filter((e) => e.from !== id && e.to !== id);
+    flowSession.selectedId = null;
+    flowSetDropTarget(null);
+    flowRenderEditor();
+  }
+  function flowLocalPoint(e) {
+    const canvas = document.getElementById('flow-canvas');
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scale = rect.width / FLOW_W || 1;
+    return {
+      x: (e.clientX - rect.left) / scale,
+      y: (e.clientY - rect.top) / scale
+    };
+  }
+  function flowNearBorder(el, e) {
+    const rect = el.getBoundingClientRect();
+    if (!rect.width || !rect.height) return false;
+    const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const ny = ((e.clientY - rect.top) / rect.height) * 2 - 1;
+    const d = nx * nx + ny * ny;
+    return d > .66 && d < 1.24;
+  }
+  function flowTargetAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const node = el && el.closest ? el.closest('.flow-node') : null;
+    return node && node.closest('#flow-canvas') ? node.dataset.nodeId : null;
+  }
+  function flowPointerDown(e) {
+    if (!flowSession) return;
+    const el = e.target.closest('.flow-node');
+    if (!el) return;
+    const id = el.dataset.nodeId;
+    flowSession.selectedId = id;
+    flowUpdateSelection();
+    if (e.button != null && e.button !== 0) return;
+    const nearBorder = flowNearBorder(el, e);
+    if (e.target.closest('.flow-node-input') && !nearBorder) return;
+    e.preventDefault();
+    const p = flowLocalPoint(e);
+    const n = flowSession.nodes.find((x) => x.id === id);
+    if (!n) return;
+    const mode = e.target.closest('.flow-port') || nearBorder ? 'connect' : 'move';
+    flowSession.pointer = {
+      id: e.pointerId,
+      mode,
+      nodeId: id,
+      start: p,
+      originX: n.x,
+      originY: n.y,
+      moved: false
+    };
+    if (mode === 'connect') flowDrawTemp(id, p);
+  }
+  function flowPointerMove(e) {
+    if (!flowSession || !flowSession.pointer) return;
+    const st = flowSession.pointer;
+    const p = flowLocalPoint(e);
+    if (st.mode === 'move') {
+      const dx = p.x - st.start.x;
+      const dy = p.y - st.start.y;
+      if (!st.moved && Math.hypot(dx, dy) < 3) return;
+      st.moved = true;
+      const n = flowSession.nodes.find((x) => x.id === st.nodeId);
+      if (!n) return;
+      n.x = Math.max(0, Math.min(FLOW_W - FLOW_NODE_W, Math.round(st.originX + dx)));
+      n.y = Math.max(0, Math.min(FLOW_H - FLOW_NODE_H, Math.round(st.originY + dy)));
+      const el = flowNodeEl(n.id);
+      if (el) {
+        el.style.left = n.x + 'px';
+        el.style.top = n.y + 'px';
+      }
+      flowDrawEdges();
+    } else {
+      st.moved = true;
+      flowDrawTemp(st.nodeId, p);
+      const target = flowTargetAt(e.clientX, e.clientY);
+      flowSetDropTarget(target && target !== st.nodeId ? target : null);
+    }
+    e.preventDefault();
+  }
+  function flowPointerUp(e) {
+    if (!flowSession || !flowSession.pointer) return;
+    const st = flowSession.pointer;
+    flowSession.pointer = null;
+    if (st.mode === 'connect') {
+      const target = flowTargetAt(e.clientX, e.clientY);
+      if (target && target !== st.nodeId &&
+          !flowSession.edges.some((x) => x.from === st.nodeId && x.to === target)) {
+        flowSession.edges.push({ from: st.nodeId, to: target });
+        flowDrawEdges();
+      }
+      flowClearTemp();
+      flowSetDropTarget(null);
+    } else if (!st.moved) {
+      const el = flowNodeEl(st.nodeId);
+      const input = el && el.querySelector('.flow-node-input');
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }
+  }
+  function openFlowEditor(ed, figure) {
+    if (!ed) return;
+    let data = { nodes: [], edges: [] };
+    if (figure) {
+      try { data = flowUnpack(figure.getAttribute('data-flow')) || data; } catch (err) { data = { nodes: [], edges: [] }; }
+    }
+    flowSession = {
+      editor: ed,
+      figure: figure || null,
+      nodes: data.nodes.slice(),
+      edges: data.edges.slice(),
+      selectedId: null,
+      pointer: null,
+      hoverId: null
+    };
+    document.getElementById('flow-backdrop').classList.remove('hidden');
+    const save = document.getElementById('flow-save');
+    if (save) save.textContent = figure ? '保存修改' : '保存到白纸';
+    flowRenderEditor();
+  }
+  function flowCloseEditor() {
+    flowClearTemp();
+    const back = document.getElementById('flow-backdrop');
+    if (back) back.classList.add('hidden');
+    flowSession = null;
+  }
+  function flowSaveToEditor() {
+    if (!flowSession) return;
+    const clean = flowClean({ nodes: flowSession.nodes, edges: flowSession.edges });
+    if (!clean.nodes.length) {
+      toast('先点左侧椭圆添加一个节点');
+      return;
+    }
+    const encoded = flowPack(clean);
+    const original = flowSession.editor;
+    const ed = document.getElementById(original.id) || original;
+    let figure = flowSession.figure;
+    if (figure && !figure.isConnected) {
+      const oldData = figure.getAttribute('data-flow');
+      figure = Array.from(ed.querySelectorAll('[data-flow]'))
+        .find((x) => x.getAttribute('data-flow') === oldData) || null;
+    }
+    if (figure && figure.isConnected) {
+      figure.setAttribute('data-flow', encoded);
+      hydrateFlowFigures(ed);
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      restoreRichSelection(ed);
+      const fig = document.createElement('div');
+      fig.setAttribute('data-flow', encoded);
+      const spacer = document.createElement('div');
+      spacer.innerHTML = '<br>';
+      insertRootBlock(ed, fig, spacer);
+      hydrateFlowFigures(ed);
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    flowCloseEditor();
+    toast(figure ? '流程图已更新' : '流程图已保存到白纸');
+  }
+  function bindFlowEditor() {
+    const back = document.getElementById('flow-backdrop');
+    if (!back) return;
+    back.addEventListener('click', (e) => {
+      if (e.target === e.currentTarget || e.target.closest('[data-flow-close]')) {
+        e.preventDefault();
+        flowCloseEditor();
+      }
+    });
+    const add = back.querySelector('[data-flow-add]');
+    if (add) add.addEventListener('click', flowAddNode);
+    const save = document.getElementById('flow-save');
+    if (save) save.addEventListener('click', flowSaveToEditor);
+    const del = document.getElementById('flow-delete-node');
+    if (del) del.addEventListener('click', flowDeleteSelected);
+    const layer = document.getElementById('flow-node-layer');
+    if (layer) layer.addEventListener('pointerdown', flowPointerDown);
+    window.addEventListener('pointermove', flowPointerMove, { passive: false });
+    window.addEventListener('pointerup', flowPointerUp);
+    window.addEventListener('pointercancel', flowPointerUp);
+    document.addEventListener('keydown', (e) => {
+      if (!flowSession) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        flowCloseEditor();
+        return;
+      }
+      const ae = document.activeElement;
+      const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
+      if (!typing && (e.key === 'Delete' || e.key === 'Backspace')) {
+        e.preventDefault();
+        flowDeleteSelected();
+      }
+    });
+    document.addEventListener('click', (e) => {
+      const fig = e.target.closest('.memo-editor [data-flow]');
+      if (!fig || !fig.isConnected || e.target.closest('[data-flow-del]')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openFlowEditor(fig.closest('.memo-editor'), fig);
+    }, true);
   }
   function memoStamp(tab) {
     const m = Core.memoOf(items(), MEMOS[tab].kind);
@@ -1684,7 +2443,8 @@
         '<option value="#15803d">绿</option>' +
       '</select>' +
       '<span class="memo-sep" aria-hidden="true"></span>' +
-      '<button class="memo-tool" type="button" data-memo-cmd="table" title="插入 3×3 表格">▦ 表格</button>' +
+      '<button class="memo-tool" type="button" data-memo-cmd="table" title="选择行列并插入表格">▦ 表格</button>' +
+      '<button class="memo-tool" type="button" data-memo-cmd="flow" title="创建可编辑流程图">◇ 流程图</button>' +
       '<button class="memo-tool" type="button" data-memo-cmd="clear" title="清除选中文字的格式">清除格式</button>' +
     '</div>';
   }
@@ -1697,7 +2457,7 @@
     const item = Core.memoOf(items(), cfg.kind);
     const html = st.html != null ? st.html : (memoHtmlForItem(item, text) || memoTextToHtml(text));
     const cleanHtml = sanitizeMemoHtml(html);
-    const empty = !String(text || '').trim() && !/<(?:table|hr)\b/i.test(cleanHtml);
+    const empty = !String(text || '').trim() && !memoHtmlHasContent(cleanHtml);
     const dueDefault = today();
     return '<section class="card memo-card memo-' + tab + '">' +
       '<h3>' + esc(cfg.title) + ' <span class="cnt" id="memo-count">' + text.length + ' 字</span></h3>' +
@@ -2110,6 +2870,7 @@
   }
   function render() {
     if (sortActive > 0) { pendingRender = true; return; }   // 拖动中重建 DOM 会把手上那张卡片变成孤儿
+    if (flowSession) { pendingRender = true; return; }       // 流程图弹窗打开时保住白纸节点与光标
     pendingRender = false;
     if (monthState.flushing) return;              // 排期正在落盘，别把输入框重建掉
     if (anyMemoFlushing()) return;               // 备忘录正在落盘，别把输入框重建掉
@@ -2795,6 +3556,8 @@
 
   /* 每次渲染后绑定本页动态按钮（节点已被替换，不会重复） */
   function bindDynamicEvents() {
+    closeTablePicker();
+    hydrateFlowFigures($('#view'));
     const b = $('#btn-plan-add');
     if (b) b.addEventListener('click', () => {
       const title = $('#p-title').value.trim();
@@ -2853,13 +3616,8 @@
         const s = document.getElementById('memo-state');
         if (s && !memoState[tab].dirty) s.textContent = memoStamp(tab);
       });
-      mt.addEventListener('paste', (e) => {
-        const txt = (e.clipboardData || window.clipboardData || {}).getData
-          ? (e.clipboardData || window.clipboardData).getData('text/plain') : '';
-        if (txt == null) return;
-        e.preventDefault();
-        document.execCommand('insertText', false, String(txt).replace(/\r\n?/g, '\n'));
-      });
+      bindRichPaste(mt);
+      bindRichKeydown(mt);
       mt.addEventListener('keyup', rememberMemoSelection);
       mt.addEventListener('mouseup', rememberMemoSelection);
     }
@@ -2882,13 +3640,8 @@
           flushRichDoc(key);
           richDocMeta(key);
         });
-        ed.addEventListener('paste', (e) => {
-          const txt = (e.clipboardData || window.clipboardData || {}).getData
-            ? (e.clipboardData || window.clipboardData).getData('text/plain') : '';
-          if (txt == null) return;
-          e.preventDefault();
-          document.execCommand('insertText', false, String(txt).replace(/\r\n?/g, '\n'));
-        });
+        bindRichPaste(ed);
+        bindRichKeydown(ed);
         ed.addEventListener('keyup', rememberMemoSelection);
         ed.addEventListener('mouseup', rememberMemoSelection);
         bindRichToolbar(toolbarEl, ed, () => richDocOnInput(key));
@@ -3279,6 +4032,7 @@
   setInterval(refreshMonthIfDayChanged, 60000);
   window.addEventListener('pagehide', () => { flushMemo(); flushMonth(); flushAllRichDocs(); });
   bindFmtBubble();
+  bindFlowEditor();
   render();
   store.init();
   if ('serviceWorker' in navigator) {

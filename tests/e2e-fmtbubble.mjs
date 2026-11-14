@@ -167,6 +167,17 @@ ok('6a 排期底稿也出现快捷按钮', await ev(`!document.querySelector('#f
 await clickPreset('medium');
 ok('6b 排期底稿也能设为小标题', await ev(`!!document.querySelector('#monthnote-editor h3')`));
 
+await ev(`(()=>{const ed=document.querySelector('#monthnote-editor');
+  ed.innerHTML='第一行没有段落包裹<div>第二行正常显示</div>';ed.dispatchEvent(new Event('input',{bubbles:true}));
+  const range=document.createRange();range.selectNodeContents(ed.firstChild);
+  const sel=getSelection();sel.removeAllRanges();sel.addRange(range);
+  document.dispatchEvent(new Event('selectionchange'));return 1})()`);
+await wait(250);
+await clickPreset('large');
+const firstLine=await ev(`(()=>{const ed=document.querySelector('#monthnote-editor');
+  const h2=ed.querySelector('h2');return {tag:h2&&h2.tagName,text:h2&&h2.textContent,html:ed.innerHTML}})()`);
+ok('6c 计划底稿第一行也能直接设为大标题', firstLine.tag==='H2'&&firstLine.text==='第一行没有段落包裹', firstLine);
+
 await ev(`document.querySelector('[data-action="report-new"]').click()`);await wait(250);
 await ev(`(()=>{const i=document.querySelector('#report-name');i.value='格式菜单测试周报';
   document.querySelector('#report-new-form').requestSubmit();return 1})()`);
@@ -177,9 +188,9 @@ await ev(`(()=>{const ed=document.querySelector('#report-editor');
   const sel=getSelection();sel.removeAllRanges();sel.addRange(range);
   document.dispatchEvent(new Event('selectionchange'));return 1})()`);
 await wait(250);
-ok('6c 周报正文也出现快捷按钮', await ev(`!document.querySelector('#fmt-bubble').classList.contains('hidden')`));
+ok('6d 周报正文也出现快捷按钮', await ev(`!document.querySelector('#fmt-bubble').classList.contains('hidden')`));
 await clickPreset('large');
-ok('6d 周报正文也能设为标题', await ev(`!!document.querySelector('#report-editor h2')`));
+ok('6e 周报正文也能设为标题', await ev(`!!document.querySelector('#report-editor h2')`));
 
 await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:2,mobile:true});
 await wait(400);

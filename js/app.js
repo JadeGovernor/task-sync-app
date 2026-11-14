@@ -1471,6 +1471,7 @@
     const ed = fmtMenuEditor && document.getElementById(fmtMenuEditor.id);
     if (!ed || !ed.isConnected) { hideFmtBubble(); return; }
     restoreRichSelection(ed);
+    richUndoCheckpoint(ed);
     const blockPreset = preset === 'large' || preset === 'medium' || preset === 'small';
     if (blockPreset) normalizePresetRoot(ed);
     const marks = markPresetSelection(ed);
@@ -1618,6 +1619,7 @@
       const cols = Number(cell.dataset.col);
       closeTablePicker();
       restoreRichSelection(ed);
+      richUndoCheckpoint(ed);
       insertMemoTable(ed, rows, cols);
       rememberRichSelection(ed);
       ed.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1711,6 +1713,7 @@
     block.appendChild(img);
     const spacer = document.createElement('div');
     spacer.innerHTML = '<br>';
+    richUndoCheckpoint(ed);
     insertRootBlock(ed, block, spacer);
     ed.dispatchEvent(new Event('input', { bubbles: true }));
   }
@@ -1749,6 +1752,7 @@
     if (!ed) return;
     ed.addEventListener('keydown', (e) => {
       if (e.key !== 'Backspace' || e.isComposing) return;
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) richUndoPrepare(ed, 'delete');
       const sel = window.getSelection();
       if (!sel || !sel.rangeCount || !sel.isCollapsed) return;
       const block = richRootBlock(ed);
@@ -1763,9 +1767,213 @@
       ed.dispatchEvent(new Event('input', { bubbles: true }));
     });
   }
+
+  /* ---------- 富文本撤销 / 重做 ----------
+   * 原生 contenteditable 的 undo 栈会在保存后重建 DOM 时丢掉，手动删表格/流程图也记不进去。
+   * 这里按「文档」保存快照；编辑器重建后仍能用 ⌘Z / Ctrl+Z 找回刚删的内容。 */
+  const RICH_UNDO = new Map();
+  let richUndoRestoring = false;
+  let richUndoGlobalBound = false;
+  let richUndoLastEditor = null;
+  function richUndoKey(ed) {
+    if (!ed) return '';
+    if (ed.dataset && ed.dataset.docKey) return ed.dataset.docKey;
+    if (ed.id === 'memo-text') return 'memo-text:' + current;
+    return ed.id || '';
+  }
+  function richUndoState(ed) {
+    const key = richUndoKey(ed);
+    if (!key) return null;
+    if (!RICH_UNDO.has(key)) {
+      RICH_UNDO.set(key, { undo: [], redo: [], bytes: 0, pending: null, pendingType: '', group: '', groupAt: 0 });
+    }
+    return RICH_UNDO.get(key);
+  }
+  function richNodePath(root, node) {
+    const path = [];
+    let n = node;
+    while (n && n !== root) {
+      const p = n.parentNode;
+      if (!p) return null;
+      path.unshift(Array.prototype.indexOf.call(p.childNodes, n));
+      n = p;
+    }
+    return n === root ? path : null;
+  }
+  function richNodeAtPath(root, path) {
+    let n = root;
+    for (let i = 0; i < path.length; i += 1) {
+      n = n && n.childNodes[path[i]];
+      if (!n) return null;
+    }
+    return n;
+  }
+  function richSelectionSnapshot(ed) {
+    const sel = window.getSelection();
+    if (!ed || !sel || !sel.rangeCount ||
+        !sel.anchorNode || !sel.focusNode ||
+        !ed.contains(sel.anchorNode) || !ed.contains(sel.focusNode)) return null;
+    const range = sel.getRangeAt(0);
+    const start = richNodePath(ed, range.startContainer);
+    const end = richNodePath(ed, range.endContainer);
+    if (!start || !end) return null;
+    return {
+      start, end,
+      startOffset: range.startOffset,
+      endOffset: range.endOffset
+    };
+  }
+  function richSnapshot(ed) {
+    return {
+      html: ed ? ed.innerHTML : '',
+      sel: richSelectionSnapshot(ed)
+    };
+  }
+  function richRestoreSelection(ed, saved) {
+    if (!ed || !saved) return;
+    const start = richNodeAtPath(ed, saved.start);
+    const end = richNodeAtPath(ed, saved.end);
+    if (!start || !end) return;
+    try {
+      const range = document.createRange();
+      range.setStart(start, Math.min(saved.startOffset,
+        start.nodeType === 3 ? String(start.nodeValue || '').length : start.childNodes.length));
+      range.setEnd(end, Math.min(saved.endOffset,
+        end.nodeType === 3 ? String(end.nodeValue || '').length : end.childNodes.length));
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (err) { /* 节点结构在快照之后变过，就保留当前光标 */ }
+  }
+  function richRestoreSnapshot(ed, snap) {
+    if (!ed || !snap) return;
+    ed.innerHTML = snap.html;
+    hydrateFlowFigures(ed);
+    const has = !!(ed.textContent || '').trim() || !!ed.querySelector('table,hr,img,[data-flow]');
+    ed.classList.toggle('is-empty', !has);
+    ed.focus();
+    richRestoreSelection(ed, snap.sel);
+  }
+  function richUndoTrim(st) {
+    while (st.undo.length > 40 || (st.bytes > 2600000 && st.undo.length > 1)) {
+      const old = st.undo.shift();
+      st.bytes -= old && old.html ? old.html.length : 0;
+      if (st.bytes < 0) st.bytes = 0;
+    }
+    while (st.redo.length > 40) st.redo.shift();
+  }
+  function richUndoPush(ed, snap) {
+    const st = richUndoState(ed);
+    if (!st || !snap) return;
+    const last = st.undo[st.undo.length - 1];
+    if (last && last.html === snap.html &&
+        JSON.stringify(last.sel) === JSON.stringify(snap.sel)) return;
+    st.undo.push(snap);
+    st.bytes += (snap.html || '').length;
+    st.redo = [];
+    richUndoTrim(st);
+  }
+  function richUndoPrepare(ed, type) {
+    if (richUndoRestoring) return;
+    const st = richUndoState(ed);
+    if (!st) return;
+    st.pending = richSnapshot(ed);
+    st.pendingType = String(type || '');
+  }
+  function richUndoCheckpoint(ed) {
+    if (richUndoRestoring || !ed) return;
+    const st = richUndoState(ed);
+    if (!st) return;
+    st.pending = null;
+    st.group = '';
+    st.groupAt = 0;
+    richUndoPush(ed, richSnapshot(ed));
+  }
+  function richUndoCommit(ed, inputType) {
+    if (richUndoRestoring) return;
+    const st = richUndoState(ed);
+    if (!st || !st.pending) return;
+    const snap = st.pending;
+    const type = String(inputType || st.pendingType || 'input');
+    st.pending = null;
+    const now = Date.now();
+    const sameGroup = st.group && st.group === type && now - st.groupAt < 900;
+    st.groupAt = now;
+    st.group = type;
+    if (sameGroup) return;
+    richUndoPush(ed, snap);
+  }
+  function richUndoAction(ed, redo) {
+    const st = richUndoState(ed);
+    if (!st) return false;
+    const from = redo ? st.redo : st.undo;
+    if (!from.length) return false;
+    const entry = from.pop();
+    const current = richSnapshot(ed);
+    if (current.html !== entry.html) {
+      if (redo) st.undo.push(current);
+      else {
+        st.redo.push(current);
+        st.redo = st.redo.slice(-40);
+      }
+    }
+    richUndoRestoring = true;
+    try {
+      richRestoreSnapshot(ed, entry);
+      st.pending = null;
+      st.group = '';
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
+    } finally {
+      richUndoRestoring = false;
+    }
+    return true;
+  }
+  function bindRichUndo(ed) {
+    if (!ed) return;
+    if (!richUndoGlobalBound) {
+      richUndoGlobalBound = true;
+      document.addEventListener('focusin', (e) => {
+        const target = e.target;
+        const active = target && target.closest &&
+          target.closest('.memo-editor[contenteditable="true"]');
+        if (active) richUndoLastEditor = active;
+      });
+      /* 点保存 / 删除按钮后焦点可能离开编辑区；仍允许撤销刚作用于该白纸的操作。 */
+      document.addEventListener('keydown', (e) => {
+        if (e.defaultPrevented || !(e.metaKey || e.ctrlKey)) return;
+        const key = String(e.key || '').toLowerCase();
+        if (key !== 'z' && key !== 'y') return;
+        const target = e.target;
+        if (target && target.closest && target.closest('.memo-editor')) return;
+        if (target && target.closest && target.closest('input,textarea,select,[contenteditable="true"]')) return;
+        const editor = richUndoLastEditor;
+        if (!editor || !editor.isConnected) return;
+        const acted = richUndoAction(editor, key === 'y' || !!e.shiftKey);
+        if (acted) e.preventDefault();
+      });
+    }
+    ed.addEventListener('beforeinput', (e) => {
+      const type = String(e.inputType || '');
+      if (!type || /^history/i.test(type)) return;
+      richUndoPrepare(ed, type);
+    });
+    ed.addEventListener('input', (e) => richUndoCommit(ed, e.inputType || ''));
+    ed.addEventListener('keydown', (e) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const key = String(e.key || '').toLowerCase();
+      if (key === 'z') {
+        const redid = richUndoAction(ed, !!e.shiftKey);
+        if (redid) e.preventDefault();
+      } else if (key === 'y') {
+        const redid = richUndoAction(ed, true);
+        if (redid) e.preventDefault();
+      }
+    });
+  }
   function applyRichCommand(ed, cmd, value) {
     if (!ed) return;
     restoreRichSelection(ed);
+    richUndoCheckpoint(ed);
     try {
       if (cmd === 'bold') {
         document.execCommand('styleWithCSS', false, true);
@@ -1949,6 +2157,7 @@
         e.preventDefault();
         e.stopPropagation();
         const ed = fig.closest('.memo-editor');
+        richUndoCheckpoint(ed);
         fig.remove();
         if (ed) ed.dispatchEvent(new Event('input', { bubbles: true }));
         toast('流程图已删除');
@@ -2206,6 +2415,7 @@
       figure = Array.from(ed.querySelectorAll('[data-flow]'))
         .find((x) => x.getAttribute('data-flow') === oldData) || null;
     }
+    richUndoCheckpoint(ed);
     if (figure && figure.isConnected) {
       figure.setAttribute('data-flow', encoded);
       hydrateFlowFigures(ed);
@@ -3618,6 +3828,7 @@
       });
       bindRichPaste(mt);
       bindRichKeydown(mt);
+      bindRichUndo(mt);
       mt.addEventListener('keyup', rememberMemoSelection);
       mt.addEventListener('mouseup', rememberMemoSelection);
     }
@@ -3642,6 +3853,7 @@
         });
         bindRichPaste(ed);
         bindRichKeydown(ed);
+        bindRichUndo(ed);
         ed.addEventListener('keyup', rememberMemoSelection);
         ed.addEventListener('mouseup', rememberMemoSelection);
         bindRichToolbar(toolbarEl, ed, () => richDocOnInput(key));

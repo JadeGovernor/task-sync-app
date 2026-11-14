@@ -808,30 +808,50 @@
     const first = new Date(y, m, 1);
     const days = new Date(y, m + 1, 0).getDate();
     const offset = (first.getDay() + 6) % 7;
-    const cells = [];
-    for (let i = 0; i < offset; i += 1) cells.push('<span class="cal-day is-blank" aria-hidden="true"></span>');
+    const rows = Math.ceil((offset + days) / 7);
+    const monthPrefix = y + '-' + p2(m + 1);
+    const monthNoteCount = Object.keys(notesByDate)
+      .filter((date) => date.startsWith(monthPrefix + '-'))
+      .reduce((sum, date) => sum + notesByDate[date].length, 0);
     const todayS = today();
     const noteLimit = calendarZoom === 0 ? 2 : calendarZoom === 1 ? 1 : 0;
-    for (let day = 1; day <= days; day += 1) {
-      const date = y + '-' + p2(m + 1) + '-' + p2(day);
-      const notes = notesByDate[date] || [];
-      const visible = notes.slice(0, noteLimit);
-      cells.push('<div class="cal-day' + (date === todayS ? ' is-today' : '') +
-        (notes.length ? ' has-notes' : '') + '" data-action="calendar-add" data-date="' + date + '">' +
-        '<div class="cal-day-head"><b>' + day + '</b>' +
-          (date === todayS ? '<em>今</em>' : '') +
-          (notes.length ? '<i class="cal-dot" title="' + notes.length + ' 条记录"></i>' : '') +
-        '</div>' +
-        (visible.length ? '<div class="cal-day-notes">' + visible.map((n) =>
-          '<span class="cal-mini-note" data-action="calendar-edit" data-id="' + n.id + '" title="' +
-            esc(n.text || '') + '">' + esc(n.text || '') + '</span>').join('') + '</div>' : '') +
-      '</div>');
+    let grid = '<div class="cal-weekdays"><span class="cal-corner">周</span>' +
+      ['一', '二', '三', '四', '五', '六', '日'].map((x, i) =>
+        '<span' + (i >= 5 ? ' class="is-weekend"' : '') + '>' + x + '</span>').join('') +
+    '</div><div class="cal-grid">';
+    for (let r = 0; r < rows; r += 1) {
+      const weekStart = new Date(y, m, 1 - offset + r * 7);
+      grid += '<span class="cal-week-no" title="ISO 第 ' + isoWeekNo(weekStart) + ' 周">' +
+        isoWeekNo(weekStart) + '</span>';
+      for (let c = 0; c < 7; c += 1) {
+        const dt = new Date(weekStart);
+        dt.setDate(weekStart.getDate() + c);
+        if (dt.getMonth() !== m) {
+          grid += '<span class="cal-day is-out" aria-hidden="true"></span>';
+          continue;
+        }
+        const date = Core.dateStr(dt);
+        const notes = notesByDate[date] || [];
+        const visible = notes.slice(0, noteLimit);
+        grid += '<div class="cal-day' +
+          (c >= 5 ? ' is-weekend' : '') +
+          (date === todayS ? ' is-today' : '') +
+          (notes.length ? ' has-notes' : '') +
+          '" data-action="calendar-add" data-date="' + date + '">' +
+          '<div class="cal-day-head"><b>' + dt.getDate() + '</b>' +
+            (notes.length ? '<i class="cal-dot" title="' + notes.length + ' 条记录"></i>' : '') +
+          '</div>' +
+          (visible.length ? '<div class="cal-day-notes">' + visible.map((n) =>
+            '<span class="cal-mini-note" data-action="calendar-edit" data-id="' + n.id + '" title="' +
+              esc(n.text || '') + '">' + esc(n.text || '') + '</span>').join('') + '</div>' : '') +
+        '</div>';
+      }
     }
-    while (cells.length % 7) cells.push('<span class="cal-day is-blank" aria-hidden="true"></span>');
+    grid += '</div>';
     return '<section class="cal-month-card">' +
-      '<h4>' + monthYearLabel(y, m) + '</h4>' +
-      '<div class="cal-weekdays">' + ['一', '二', '三', '四', '五', '六', '日'].map((x) => '<span>' + x + '</span>').join('') + '</div>' +
-      '<div class="cal-grid">' + cells.join('') + '</div>' +
+      '<h4><span>' + monthYearLabel(y, m) + '</span>' +
+        (monthNoteCount ? '<small>' + monthNoteCount + ' 条记录</small>' : '') +
+      '</h4>' + grid +
     '</section>';
   }
   function calendarRecordsSorted() {
@@ -872,7 +892,7 @@
             '<button type="button" class="cal-zoom-btn' + (String(calendarZoom) === x[0] ? ' is-on' : '') +
               '" data-action="calendar-zoom" data-zoom="' + x[0] + '">' + x[1] + '</button>').join('') +
         '</div>' +
-        '<span class="hint tight">点日期写记录；回车保存，可连续添加多条。绿点表示当天有记录。</span>' +
+        '<span class="hint tight">点日期写记录；回车保存，可连续添加多条。绿色浅块和圆点表示当天有记录。</span>' +
       '</div>' +
       '<div class="cal-months zoom-' + calendarZoom + '">' +
         months.map((x) => calendarMonthGrid(x.y, x.m, notesByDate)).join('') +

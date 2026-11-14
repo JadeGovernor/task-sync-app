@@ -1,4 +1,4 @@
-/* v52：分层导航、日历、日程七天纸、今日四块提醒、富文本提醒统一进今日顶部 */
+/* v53：分层导航、日历、日程七天纸、今日四块提醒、富文本提醒统一进今日顶部 */
 const CDP = 'http://127.0.0.1:9334';
 const ORIGIN = 'http://127.0.0.1:8123';
 const URL_ = ORIGIN + '/index.html?v=' + Date.now();
@@ -173,6 +173,14 @@ const nav = await ev(`(() => ({
 ok('1a 三个分组按 创意层/计划层/行动层 排列',
   JSON.stringify(nav.groups) === JSON.stringify(['创意层', '计划层', '行动层']), nav.groups);
 ok('1b 分组后是今日和更多', /今日/.test(nav.today) && /更多/.test(nav.more), nav);
+const groupStyle = await ev(`[...document.querySelectorAll('.nav-group')].map((g) => {
+  const box = getComputedStyle(g);
+  const main = getComputedStyle(g.querySelector('.nav-group-main'));
+  return { bg: box.backgroundColor, border: box.borderColor, cursor: main.cursor };
+})`);
+ok('1b2 三个分组用不同底色区分', new Set(groupStyle.map((x) => x.bg)).size === 3, groupStyle);
+ok('1b3 分组标题视觉上不可点击（默认光标）',
+  groupStyle.every((x) => x.cursor === 'default'), groupStyle);
 const todayBefore = await ev(`document.querySelector('#view').textContent`);
 await ev(`document.querySelector('.nav-group[data-nav-wrap="creative"] .nav-group-main').click()`);
 await wait(150);
@@ -200,17 +208,23 @@ await ev(`document.querySelector('.nav-more-btn').click()`);
 await wait(150);
 const legacy = await ev(`(() => ({
   open: !document.querySelector('.nav-more-menu').classList.contains('hidden'),
-  labels: [...document.querySelectorAll('.nav-more-menu .tab')].map((x) => x.textContent.replace(/\\d+/g, '').trim())
+  labels: [...document.querySelectorAll('.nav-more-menu .tab')].map((x) => x.textContent.replace(/\\d+/g, '').trim()),
+  topmost: (() => {
+    const r = document.querySelector('.nav-more-menu .tab').getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return !!(hit && hit.closest('.nav-more-menu'));
+  })()
 }))()`);
 ok('3a 更多菜单可展开且旧入口都在', legacy.open && legacy.labels.length >= 10, legacy);
 ok('3b 旧入口已改名：项目/打卡/点子', ['项目', '打卡', '点子'].every((x) => legacy.labels.includes(x)), legacy.labels);
 ok('3c 旧入口不再出现 自律/创意', !legacy.labels.includes('自律') && !legacy.labels.includes('创意'), legacy.labels);
+ok('3c2 更多菜单位于页面最上层', legacy.topmost, legacy);
 await ev(`document.querySelector('.nav-more-menu .tab[data-tab="settings"]').click()`);
 ok('3d 旧入口仍能打开设置页', await waitFor(`/连接同步/.test(document.querySelector('#view').textContent)`));
 await ev(`document.querySelector('.nav-today').click()`);
 await wait(350);
 
-/* 4. 日历：三档、12 个月 4×3、当日多条、编辑删除、绿点、Banner */
+/* 4. 日历：三档、三个月竖排、12 个月 6×2、当日多条、编辑删除、绿点、Banner */
 await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 await wait(250);
 await ev(`document.querySelector('.nav-group[data-nav-wrap="planning"] .tab[data-tab="calendar"]').click()`);
@@ -220,6 +234,13 @@ ok('4b 默认只显示本月', (await ev(`document.querySelectorAll('.cal-month-
 await ev(`document.querySelector('[data-action="calendar-zoom"][data-zoom="1"]').click()`);
 await wait(200);
 ok('4c 三个月档显示 3 个月', (await ev(`document.querySelectorAll('.cal-month-card').length`)) === 3);
+const calGrid3 = await ev(`(() => {
+  const cards = [...document.querySelectorAll('.cal-month-card')];
+  const tops = [...new Set(cards.map((x) => Math.round(x.getBoundingClientRect().top)))];
+  const lefts = [...new Set(cards.map((x) => Math.round(x.getBoundingClientRect().left)))];
+  return { n: cards.length, rows: tops.length, cols: lefts.length };
+})()`);
+ok('4c2 三个月纵向排列', calGrid3.rows === 3 && calGrid3.cols === 1, calGrid3);
 await ev(`document.querySelector('[data-action="calendar-zoom"][data-zoom="2"]').click()`);
 await wait(250);
 const calGrid = await ev(`(() => {
@@ -229,9 +250,10 @@ const calGrid = await ev(`(() => {
   return { n: cards.length, rows: tops.length, cols: lefts.length };
 })()`);
 ok('4d 十二个月档共 12 张', calGrid.n === 12, calGrid);
-ok('4e 十二个月按 4 行 × 3 列排列', calGrid.rows === 4 && calGrid.cols === 3, calGrid);
+ok('4e 十二个月按 6 行 × 2 列排列', calGrid.rows === 6 && calGrid.cols === 2, calGrid);
 ok('4f 今天在日历上有标记', await ev(`!!document.querySelector('.cal-day.is-today')`));
 ok('4g 空间不足时仍有绿点', await ev(`!!document.querySelector('.cal-day.has-notes .cal-dot')`));
+ok('4g2 日历显示 ISO 周序号', await ev(`document.querySelectorAll('.cal-week-no').length >= 4`));
 
 await ev(`document.querySelector('.cal-day[data-date="${dates.t}"]').click()`);
 await wait(160);

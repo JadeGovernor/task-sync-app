@@ -47,8 +47,20 @@
   /* 本月排期：一周一条记录（kind=monthweek），四条周范围和正文都跟着 tasks.json 三端同步。
    * 拆成四条是为了避免「两台设备各改一周」时整条记录互相覆盖。 */
   const MONTH_KIND = 'monthweek';
+  const MONTH_NOTE_KIND = 'monthnote';
+  const REPORT_KIND = 'weekreport';
   const WEEK_NAMES = ['第一周', '第二周', '第三周', '第四周'];
   let monthState = { key: null, drafts: {}, timer: null, dirty: false, flushing: false, rangeEdit: null };
+  let activeReportId = null;
+  let reportNaming = false;
+  const RICH_DOCS = {};
+  const richDocState = (key) => {
+    if (!RICH_DOCS[key]) {
+      RICH_DOCS[key] = { timer: null, dirty: false, flushing: false, draft: null, html: null };
+    }
+    return RICH_DOCS[key];
+  };
+  const anyRichDocFlushing = () => Object.keys(RICH_DOCS).some((k) => RICH_DOCS[k].flushing);
 
   /* 顶栏状态文案：同步成功时带上时刻，方便确认「实时同步」真的在跑 */
   function statusText() {
@@ -709,7 +721,211 @@
         '<h3>本月排期 <span class="cnt">四周</span></h3>' +
         '<p class="hint tight">点周次后面的 ✎ 可以改这一周的范围，日历上的色块会跟着变；右边每行随便写，停手约 1 秒自动保存并同步三端。</p>' +
         '<div class="ms-table">' + rows + '</div>' +
-      '</section>' + editRoom;
+      '</section>' +
+      renderMonthNote() +
+      renderReports() +
+      editRoom;
+  }
+
+  /* ---------- 计划底稿 + 周报：都能直接写富文本，按任务条目同步 ---------- */
+  const REPORT_DOC_PREFIX = 'report:';
+  const monthNoteItem = () => items().find((t) => t && t.kind === MONTH_NOTE_KIND) || null;
+  const reportById = (id) => items().find((t) => t && t.kind === REPORT_KIND && t.id === id) || null;
+  function reportItems() {
+    return itemOfKind(REPORT_KIND).slice().sort((a, b) => {
+      const aa = String(a.createdAt || a.created || '');
+      const bb = String(b.createdAt || b.created || '');
+      if (aa !== bb) return aa < bb ? 1 : -1;
+      return String(a.id || '') < String(b.id || '') ? 1 : -1;
+    });
+  }
+  function richDocSpec(key) {
+    if (key === MONTH_NOTE_KIND) {
+      return {
+        key, kind: MONTH_NOTE_KIND, title: '计划底稿',
+        editorId: 'monthnote-editor', toolbarId: 'monthnote-toolbar',
+        countId: 'monthnote-count', stateId: 'monthnote-state'
+      };
+    }
+    if (String(key).indexOf(REPORT_DOC_PREFIX) === 0) {
+      const id = String(key).slice(REPORT_DOC_PREFIX.length);
+      return {
+        key, kind: REPORT_KIND, id,
+        editorId: 'report-editor', toolbarId: 'report-toolbar',
+        countId: 'report-count', stateId: 'report-state'
+      };
+    }
+    return null;
+  }
+  function richDocBase(key) {
+    return key === MONTH_NOTE_KIND ? monthNoteItem() : reportById(String(key).slice(REPORT_DOC_PREFIX.length));
+  }
+  function richDocText(key) {
+    const base = richDocBase(key);
+    return base && typeof base.memo === 'string' ? base.memo : '';
+  }
+  function richDocStamp(key) {
+    const base = richDocBase(key);
+    if (!base || !base.updatedAt) return key === MONTH_NOTE_KIND ? '还没有内容' : '自动保存';
+    const d = new Date(base.updatedAt);
+    if (isNaN(d.getTime())) return '自动保存';
+    const p = (n) => String(n).padStart(2, '0');
+    return '已保存 · ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function richDocShellHTML(key) {
+    const spec = richDocSpec(key);
+    const st = richDocState(key);
+    const base = richDocBase(key);
+    const text = st.draft != null ? st.draft : (base && typeof base.memo === 'string' ? base.memo : '');
+    const html = st.html != null ? st.html : (memoHtmlForItem(base, text) || memoTextToHtml(text));
+    const cleanHtml = sanitizeMemoHtml(html);
+    const empty = !String(text || '').trim() && !/<(?:table|hr)\b/i.test(cleanHtml);
+    const ph = key === MONTH_NOTE_KIND
+      ? '把所有想做的事先写在这里，再从里面挑出这个月要推进的，填到上面的排期里…'
+      : '写这一周的进展、问题、下周安排…';
+    return '<div class="memo-editor-shell rich-doc-shell">' +
+        richToolbarHTML(spec.toolbarId) +
+        '<div id="' + spec.editorId + '" class="memo-editor rich-doc-editor' + (empty ? ' is-empty' : '') + '" ' +
+          'contenteditable="true" role="textbox" aria-multiline="true" spellcheck="false" ' +
+          'data-doc-key="' + esc(key) + '" data-placeholder="' + esc(ph) + '">' + cleanHtml + '</div>' +
+      '</div>' +
+      '<div class="doc-foot"><span class="hint" id="' + spec.stateId + '">' + esc(richDocStamp(key)) + '</span></div>';
+  }
+  function flushRichDoc(key) {
+    const spec = richDocSpec(key);
+    if (!spec) return;
+    const st = richDocState(key);
+    if (st.timer) { clearTimeout(st.timer); st.timer = null; }
+    if (!st.dirty && st.draft == null) return;
+    const ed = document.getElementById(spec.editorId);
+    const text = ed ? memoEditorPlain(ed) : st.draft;
+    if (text == null) return;
+    const html = ed ? memoEditorHtml(ed) : (st.html != null ? st.html : memoTextToHtml(text));
+    st.dirty = false;
+    const base = richDocBase(key);
+    const prevText = base && typeof base.memo === 'string' ? base.memo : '';
+    const prevHtml = base && typeof base.memoHtml === 'string' ? base.memoHtml : '';
+    if (spec.kind === REPORT_KIND && !base) {
+      st.draft = null;
+      st.html = null;
+      return;
+    }
+    if (text === prevText && html === prevHtml) {
+      st.draft = null;
+      st.html = null;
+      return;
+    }
+    const item = base || Core.newItem({ kind: spec.kind, title: spec.title || '周报' });
+    st.draft = null;
+    st.html = null;
+    st.flushing = true;
+    try {
+      store.saveTask(Object.assign({}, item, {
+        memo: text,
+        memoHtml: html || memoTextToHtml(text),
+        updatedAt: new Date().toISOString()
+      }));
+    } finally {
+      st.flushing = false;
+    }
+  }
+  function flushAllRichDocs() {
+    Object.keys(RICH_DOCS).forEach((key) => flushRichDoc(key));
+  }
+  function richDocMeta(key) {
+    const spec = richDocSpec(key);
+    if (!spec) return;
+    const st = richDocState(key);
+    const cnt = document.getElementById(spec.countId);
+    if (cnt) cnt.textContent = (st.draft != null ? st.draft : richDocText(key)).length + ' 字';
+    const state = document.getElementById(spec.stateId);
+    if (state) state.textContent = st.dirty ? '保存中…' : richDocStamp(key);
+  }
+  function richDocOnInput(key) {
+    const spec = richDocSpec(key);
+    const ed = spec && document.getElementById(spec.editorId);
+    if (!ed) return;
+    const st = richDocState(key);
+    st.dirty = true;
+    st.draft = memoEditorPlain(ed);
+    st.html = memoEditorHtml(ed);
+    ed.classList.toggle('is-empty', !st.draft.trim() && !ed.querySelector('table,hr'));
+    richDocMeta(key);
+    if (st.timer) clearTimeout(st.timer);
+    st.timer = setTimeout(() => {
+      st.timer = null;
+      flushRichDoc(key);
+      richDocMeta(key);
+    }, 800);
+  }
+  function renderMonthNote() {
+    const st = richDocState(MONTH_NOTE_KIND);
+    const text = st.draft != null ? st.draft : richDocText(MONTH_NOTE_KIND);
+    return '<section class="card month-note-card">' +
+      '<h3>计划底稿 <span class="cnt" id="monthnote-count">' + text.length + ' 字</span></h3>' +
+      '<p class="hint tight">先把所有想做的事都放在这张纸上；再挑出最近一个月要推进的，填到上面的四周排期里。停手约 1 秒自动保存并同步三端。</p>' +
+      richDocShellHTML(MONTH_NOTE_KIND) +
+      '</section>';
+  }
+  function reportWhen(item) {
+    const raw = item && (item.createdAt || item.updatedAt || item.created);
+    if (!raw) return '';
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return String(raw).slice(0, 10);
+    const p = (n) => String(n).padStart(2, '0');
+    return (d.getMonth() + 1) + '.' + p(d.getDate());
+  }
+  function renderReports() {
+    const list = reportItems();
+    if (activeReportId && !reportById(activeReportId)) activeReportId = null;
+    if (!activeReportId && list.length) activeReportId = list[0].id;
+    const active = activeReportId ? reportById(activeReportId) : null;
+    const naming = reportNaming
+      ? '<form id="report-new-form" class="report-name-form">' +
+          '<input id="report-name" type="text" maxlength="80" autocomplete="off" placeholder="例如：11 月第二周周报" />' +
+          '<button class="btn btn-sm btn-primary" type="submit">创建</button>' +
+          '<button class="btn btn-sm" type="button" data-action="report-name-cancel">取消</button>' +
+        '</form>'
+      : '';
+    const banners = list.map((r) =>
+      '<div class="report-banner' + (r.id === activeReportId ? ' is-active' : '') + '">' +
+        '<button class="report-banner-hit" type="button" data-action="report-select" data-id="' + r.id + '">' +
+          '<b>' + esc(r.title || '未命名周报') + '</b>' +
+          '<span>' + esc(reportWhen(r)) + '</span>' +
+        '</button>' +
+      '</div>'
+    ).join('');
+    const right = active
+      ? '<article class="report-paper" data-report-paper="' + active.id + '">' +
+          '<div class="report-paper-head">' +
+            '<div class="report-paper-title"><b>' + esc(active.title || '未命名周报') + '</b>' +
+              '<span>创建于 ' + esc(reportWhen(active)) + ' · 自动保存</span></div>' +
+            '<button class="mini-btn" type="button" data-action="report-delete" data-id="' + active.id + '">删除</button>' +
+          '</div>' +
+          '<div class="report-paper-scroll">' +
+            richDocShellHTML(REPORT_DOC_PREFIX + active.id) +
+          '</div>' +
+        '</article>'
+      : '<div class="report-empty"><b>还没有周报</b><span>点左上角「＋ 新增周报」，输入名称后按回车，左侧就会出现一张可点击的周报卡片。</span></div>';
+    return '<section class="card reports-card">' +
+      '<div class="reports-head">' +
+        '<div class="reports-titlebar">' +
+          '<button class="btn btn-sm btn-primary report-new-btn" type="button" data-action="report-new">＋ 新增周报</button>' +
+          '<div><h3>周报 <span class="cnt">' + list.length + ' 份</span></h3>' +
+            '<p class="hint tight">左侧选周报，右侧直接写；两栏各自滚动，不会互相带着跑。</p></div>' +
+        '</div>' +
+        naming +
+      '</div>' +
+      '<div class="reports-workspace">' +
+        '<aside class="report-list-panel">' +
+          '<div class="report-list-cap">周报列表</div>' +
+          '<div class="report-banner-list">' +
+            (banners || '<div class="report-list-empty">还没有周报</div>') +
+          '</div>' +
+        '</aside>' +
+        '<div class="report-pane">' + right + '</div>' +
+      '</div>' +
+      '</section>';
   }
 
   /* ---------- 备忘录（琐事 / 创意）：一整张纸，随便写、随时改 ---------- */
@@ -981,24 +1197,234 @@
     if (at < 0) return fallback;
     return normalizeMemoPlain(text.slice(0, at)).split('\n').length - 1;
   }
-  let memoSavedRange = null;
-  function rememberMemoSelection() {
-    const ed = document.getElementById('memo-text');
-    if (!ed || !MEMOS[current]) return;
+  const RICH_RANGES = new Map();
+  function rememberRichSelection(ed) {
+    if (!ed || !ed.id) return;
     const sel = window.getSelection();
     if (sel && sel.rangeCount && sel.anchorNode && ed.contains(sel.anchorNode)) {
-      memoSavedRange = sel.getRangeAt(0).cloneRange();
+      RICH_RANGES.set(ed.id, sel.getRangeAt(0).cloneRange());
     }
   }
-  function restoreMemoSelection(ed) {
+  function rememberMemoSelection() {
+    const ae = document.activeElement;
+    const ed = ae && ae.closest ? ae.closest('.memo-editor[contenteditable="true"]') : null;
+    if (ed) rememberRichSelection(ed);
+  }
+  function restoreRichSelection(ed) {
     if (!ed) return;
     ed.focus();
     const sel = window.getSelection();
     if (!sel) return;
     if (sel.rangeCount && sel.anchorNode && ed.contains(sel.anchorNode)) return;
-    if (!memoSavedRange || !ed.contains(memoSavedRange.commonAncestorContainer)) return;
+    const saved = RICH_RANGES.get(ed.id);
+    if (!saved || !ed.contains(saved.commonAncestorContainer)) return;
     sel.removeAllRanges();
-    sel.addRange(memoSavedRange);
+    sel.addRange(saved);
+  }
+
+  /* 选中文字后，在选区最左侧出现「＋」；大 / 中 / 小 / B 都是强制落到目标状态，
+   * 不是简单 toggle。反复在大中小 B 之间切，也不会叠出一层层字号或粗体。 */
+  let fmtMenuEditor = null;
+  let fmtPositionFrame = 0;
+  function hideFmtBubble() {
+    const bubble = document.getElementById('fmt-bubble');
+    if (!bubble) return;
+    bubble.classList.add('hidden');
+    bubble.classList.remove('is-open');
+    bubble.setAttribute('aria-hidden', 'true');
+    fmtMenuEditor = null;
+  }
+  function updateFmtBubble() {
+    const bubble = document.getElementById('fmt-bubble');
+    if (!bubble) return;
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || sel.isCollapsed) { hideFmtBubble(); return; }
+    const range = sel.getRangeAt(0);
+    const node = sel.anchorNode;
+    const el = node && node.nodeType === 1 ? node : node && node.parentElement;
+    const ed = el && el.closest ? el.closest('.memo-editor[contenteditable="true"]') : null;
+    if (!ed || !ed.contains(range.commonAncestorContainer)) { hideFmtBubble(); return; }
+    const rects = Array.from(range.getClientRects()).filter((r) => r.width || r.height);
+    const rect = rects.length
+      ? rects.reduce((a, b) => (b.left < a.left ? b : a), rects[0])
+      : range.getBoundingClientRect();
+    if (!rect || (!rect.width && !rect.height)) { hideFmtBubble(); return; }
+    const width = bubble.offsetWidth || 28;
+    const height = bubble.offsetHeight || 28;
+    const left = Math.max(4, Math.min(rect.left - width - 5, window.innerWidth - width - 4));
+    const top = Math.max(6, Math.min(rect.top + rect.height / 2 - height / 2, window.innerHeight - height - 6));
+    bubble.style.left = Math.round(left) + 'px';
+    bubble.style.top = Math.round(top) + 'px';
+    bubble.classList.toggle('opens-up', top + height + 150 > window.innerHeight);
+    bubble.classList.remove('hidden');
+    bubble.setAttribute('aria-hidden', 'false');
+    fmtMenuEditor = ed;
+    rememberRichSelection(ed);
+  }
+  function scheduleFmtBubble() {
+    if (fmtPositionFrame) return;
+    fmtPositionFrame = requestAnimationFrame(() => {
+      fmtPositionFrame = 0;
+      updateFmtBubble();
+    });
+  }
+  function presetBlocks(ed) {
+    const sel = window.getSelection();
+    if (!ed || !sel || !sel.rangeCount) return [];
+    const range = sel.getRangeAt(0);
+    const blocks = Array.from(ed.children).filter((el) => {
+      try { return range.intersectsNode(el); } catch (err) { return false; }
+    });
+    if (blocks.length) return blocks;
+    let node = sel.anchorNode;
+    while (node && node.parentNode !== ed) node = node.parentNode;
+    return node && node.nodeType === 1 ? [node] : [];
+  }
+  function unwrapElement(el) {
+    const parent = el.parentNode;
+    if (!parent) return;
+    while (el.firstChild) parent.insertBefore(el.firstChild, el);
+    parent.removeChild(el);
+  }
+  function replaceBlockTag(block, tag) {
+    if (!block || !block.parentNode) return null;
+    if (block.tagName === tag) return block;
+    const next = document.createElement(tag);
+    while (block.firstChild) next.appendChild(block.firstChild);
+    block.replaceWith(next);
+    return next;
+  }
+  function stripPresetInline(root, forceBold) {
+    Array.from(root.querySelectorAll('font, b, strong, span')).forEach((el) => {
+      if (el.hasAttribute('data-fmt-anchor')) return;
+      if (el.tagName === 'FONT' && el.hasAttribute('size')) el.removeAttribute('size');
+      if (el.tagName === 'B' || el.tagName === 'STRONG' || (el.tagName === 'FONT' && !el.hasAttribute('size'))) {
+        unwrapElement(el);
+        return;
+      }
+      const style = el.getAttribute('style');
+      if (style != null) {
+        const kept = style.split(';').filter((part) => {
+          const k = part.split(':')[0].trim().toLowerCase();
+          return k && k !== 'font-size' && k !== 'font-weight';
+        }).join(';');
+        if (kept) el.setAttribute('style', kept);
+        else el.removeAttribute('style');
+      }
+      if (el.tagName === 'SPAN' && !el.getAttribute('style')) unwrapElement(el);
+    });
+    if (forceBold) {
+      const style = root.getAttribute('style');
+      if (style != null) {
+        const kept = style.split(';').filter((part) => {
+          const k = part.split(':')[0].trim().toLowerCase();
+          return k && k !== 'font-size' && k !== 'font-weight';
+        }).join(';');
+        if (kept) root.setAttribute('style', kept);
+        else root.removeAttribute('style');
+      }
+    }
+  }
+  function setBoldState(want) {
+    const on = (() => {
+      try { return !!document.queryCommandState('bold'); } catch (err) { return false; }
+    })();
+    if (on !== !!want) document.execCommand('bold', false, null);
+  }
+  function markPresetSelection(ed) {
+    const sel = window.getSelection();
+    if (!ed || !sel || !sel.rangeCount || sel.isCollapsed) return null;
+    const range = sel.getRangeAt(0).cloneRange();
+    const end = document.createElement('span');
+    end.setAttribute('data-fmt-anchor', 'end');
+    const endRange = range.cloneRange();
+    endRange.collapse(false);
+    endRange.insertNode(end);
+    const start = document.createElement('span');
+    start.setAttribute('data-fmt-anchor', 'start');
+    const startRange = range.cloneRange();
+    startRange.collapse(true);
+    startRange.insertNode(start);
+    const marked = document.createRange();
+    marked.setStartAfter(start);
+    marked.setEndBefore(end);
+    sel.removeAllRanges();
+    sel.addRange(marked);
+    return { ed, start, end, fallback: range };
+  }
+  function restorePresetSelection(marks) {
+    if (!marks) return;
+    const { ed, start, end, fallback } = marks;
+    if (start.isConnected && end.isConnected && ed.contains(start) && ed.contains(end)) {
+      const range = document.createRange();
+      range.setStartAfter(start);
+      range.setEndBefore(end);
+      start.remove();
+      end.remove();
+      if (!range.collapsed) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        rememberRichSelection(ed);
+        return;
+      }
+    }
+    if (start.isConnected) start.remove();
+    if (end.isConnected) end.remove();
+    const sel = window.getSelection();
+    if (fallback && fallback.startContainer && ed.contains(fallback.startContainer) &&
+        fallback.endContainer && ed.contains(fallback.endContainer)) {
+      sel.removeAllRanges();
+      sel.addRange(fallback);
+      rememberRichSelection(ed);
+    }
+  }
+  function applyFmtPreset(preset) {
+    const ed = fmtMenuEditor && document.getElementById(fmtMenuEditor.id);
+    if (!ed || !ed.isConnected) { hideFmtBubble(); return; }
+    restoreRichSelection(ed);
+    const marks = markPresetSelection(ed);
+    try {
+      document.execCommand('styleWithCSS', false, true);
+      if (preset === 'large' || preset === 'medium' || preset === 'small') {
+        const tag = preset === 'large' ? 'H2' : preset === 'medium' ? 'H3' : 'P';
+        /* 段落格式直接改块节点，不交给 execCommand('formatBlock')。
+         * 后者在「普通段落切成标题、再切回来」时偶发折叠选区，
+         * 下一次格式就落到空段落上 —— 这正是反复切换看起来会坏的原因。 */
+        presetBlocks(ed).forEach((block) => {
+          if (!block || block.tagName === 'TABLE') return;
+          const next = replaceBlockTag(block, tag);
+          if (next) stripPresetInline(next, true);
+        });
+      } else if (preset === 'bold') {
+        setBoldState(true);
+      }
+    } catch (err) { /* 老浏览器不支持某个命令时保持原文 */ }
+    restorePresetSelection(marks);
+    rememberRichSelection(ed);
+    ed.dispatchEvent(new Event('input', { bubbles: true }));
+    scheduleFmtBubble();
+  }
+  function bindFmtBubble() {
+    const bubble = document.getElementById('fmt-bubble');
+    if (!bubble) return;
+    bubble.addEventListener('pointerdown', (e) => e.preventDefault());
+    bubble.querySelector('.fmt-trigger').addEventListener('click', () => {
+      if (bubble.classList.contains('hidden')) return;
+      bubble.classList.toggle('is-open');
+    });
+    bubble.querySelectorAll('[data-fmt-preset]').forEach((btn) => {
+      btn.addEventListener('click', () => applyFmtPreset(btn.dataset.fmtPreset));
+    });
+    document.addEventListener('pointerdown', (e) => {
+      if (!bubble.contains(e.target)) bubble.classList.remove('is-open');
+    }, true);
+    document.addEventListener('scroll', () => {
+      if (!bubble.classList.contains('hidden')) scheduleFmtBubble();
+    }, true);
+    window.addEventListener('resize', () => {
+      if (!bubble.classList.contains('hidden')) scheduleFmtBubble();
+    });
   }
   function memoTableHtml() {
     const cell = (tag) => '<' + tag + '><br></' + tag + '>';
@@ -1032,10 +1458,9 @@
       sel.addRange(r);
     }
   }
-  function applyMemoCommand(tab, cmd, value) {
-    const ed = document.getElementById('memo-text');
+  function applyRichCommand(ed, cmd, value) {
     if (!ed) return;
-    restoreMemoSelection(ed);
+    restoreRichSelection(ed);
     try {
       if (cmd === 'bold') {
         document.execCommand('styleWithCSS', false, true);
@@ -1058,8 +1483,27 @@
         document.execCommand('formatBlock', false, 'P');
       }
     } catch (err) { /* 老浏览器不支持某个命令时保持原文，不要报错 */ }
-    memoOnInput(tab);
-    rememberMemoSelection();
+    rememberRichSelection(ed);
+  }
+  function bindRichToolbar(toolbar, ed, onChange) {
+    if (!toolbar || !ed) return;
+    toolbar.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button[data-memo-cmd]')) e.preventDefault();
+    });
+    toolbar.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-memo-cmd]');
+      if (!btn) return;
+      applyRichCommand(ed, btn.dataset.memoCmd, null);
+      onChange();
+    });
+    toolbar.querySelectorAll('select[data-memo-select]').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        if (!sel.value) return;
+        applyRichCommand(ed, sel.dataset.memoSelect, sel.value);
+        sel.value = '';
+        onChange();
+      });
+    });
   }
   function memoStamp(tab) {
     const m = Core.memoOf(items(), MEMOS[tab].kind);
@@ -1217,8 +1661,8 @@
     const s = document.getElementById('memo-state');
     if (s && !st.dirty) s.textContent = memoStamp(tab);
   }
-  function memoToolbarHTML() {
-    return '<div class="memo-toolbar" id="memo-toolbar" role="toolbar" aria-label="文字格式">' +
+  function richToolbarHTML(id) {
+    return '<div class="memo-toolbar rich-toolbar" id="' + esc(id) + '" role="toolbar" aria-label="文字格式">' +
       '<button class="memo-tool memo-bold" type="button" data-memo-cmd="bold" title="加粗（选中文字后点）"><b>B</b></button>' +
       '<select class="memo-select" data-memo-select="block" aria-label="段落样式">' +
         '<option value="">段落</option><option value="p">正文</option>' +
@@ -1243,6 +1687,7 @@
       '<button class="memo-tool" type="button" data-memo-cmd="clear" title="清除选中文字的格式">清除格式</button>' +
     '</div>';
   }
+  const memoToolbarHTML = () => richToolbarHTML('memo-toolbar');
   function renderMemo(tab) {
     const cfg = MEMOS[tab];
     const st = memoState[tab];
@@ -1667,6 +2112,7 @@
     pendingRender = false;
     if (monthState.flushing) return;              // 排期正在落盘，别把输入框重建掉
     if (anyMemoFlushing()) return;               // 备忘录正在落盘，别把输入框重建掉
+    if (anyRichDocFlushing()) return;            // 计划底稿 / 周报正在落盘，保住光标
     if (MEMOS[current]) {
       const st = memoState[current];
       const ed = document.getElementById('memo-text');
@@ -1686,6 +2132,17 @@
       if (ae && ae.classList && ae.classList.contains('ms-text')) {
         flushMonth();                            // 先把正在敲的字存下来
         $('#subline').textContent = statusText(); // 内容没变：只更新顶栏，保住光标
+        return;
+      }
+      if (ae && ae.dataset && ae.dataset.docKey) {
+        flushRichDoc(ae.dataset.docKey);
+        if (!reportNaming) {
+          $('#subline').textContent = statusText();
+          return;
+        }
+      }
+      if (ae && ae.id === 'report-name' && reportNaming) {
+        $('#subline').textContent = statusText();
         return;
       }
       if (monthState.dirty) flushMonth();
@@ -2408,21 +2865,49 @@
     const toolbar = $('#memo-toolbar');
     if (toolbar && MEMOS[current]) {
       const tab = current;
-      toolbar.addEventListener('mousedown', (e) => {
-        if (e.target.closest('button[data-memo-cmd]')) e.preventDefault();
-      });
-      toolbar.addEventListener('click', (e) => {
-        const btn = e.target.closest('button[data-memo-cmd]');
-        if (!btn) return;
-        applyMemoCommand(tab, btn.dataset.memoCmd, null);
-      });
-      toolbar.querySelectorAll('select[data-memo-select]').forEach((sel) => {
-        sel.addEventListener('change', () => {
-          if (!sel.value) return;
-          applyMemoCommand(tab, sel.dataset.memoSelect, sel.value);
-          sel.value = '';
+      bindRichToolbar(toolbar, mt, () => memoOnInput(tab));
+    }
+    /* 计划底稿 / 周报：和琐事同一套富文本行为，但各自独立保存 */
+    if (current === 'month') {
+      const docKeys = [MONTH_NOTE_KIND];
+      if (activeReportId && reportById(activeReportId)) docKeys.push(REPORT_DOC_PREFIX + activeReportId);
+      docKeys.forEach((key) => {
+        const spec = richDocSpec(key);
+        const ed = spec && document.getElementById(spec.editorId);
+        if (!ed) return;
+        const toolbarEl = document.getElementById(spec.toolbarId);
+        ed.addEventListener('input', () => richDocOnInput(key));
+        ed.addEventListener('blur', () => {
+          flushRichDoc(key);
+          richDocMeta(key);
         });
+        ed.addEventListener('paste', (e) => {
+          const txt = (e.clipboardData || window.clipboardData || {}).getData
+            ? (e.clipboardData || window.clipboardData).getData('text/plain') : '';
+          if (txt == null) return;
+          e.preventDefault();
+          document.execCommand('insertText', false, String(txt).replace(/\r\n?/g, '\n'));
+        });
+        ed.addEventListener('keyup', rememberMemoSelection);
+        ed.addEventListener('mouseup', rememberMemoSelection);
+        bindRichToolbar(toolbarEl, ed, () => richDocOnInput(key));
       });
+      if (reportNaming) {
+        requestAnimationFrame(() => {
+          const input = $('#report-name');
+          if (input) input.focus();
+        });
+      }
+      const nameInput = $('#report-name');
+      if (nameInput) {
+        nameInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            reportNaming = false;
+            render();
+          }
+        });
+      }
     }
     const autoGrow = (el) => {
       el.style.height = 'auto';
@@ -2516,9 +3001,25 @@
   /* ---------- 全局事件（一次绑定） ---------- */
   function onViewClick(e) {
     const tabEl = e.target.closest('.tab[data-tab]');   // 只有顶部 tab 条才切页；别把内容里的 data-* 当切页指令
-    if (tabEl) { flushMemo(); flushMonth(); current = tabEl.dataset.tab; render(); return; }
+    if (tabEl) {
+      flushMemo();
+      flushMonth();
+      flushAllRichDocs();
+      current = tabEl.dataset.tab;
+      if (current !== 'month') reportNaming = false;
+      render();
+      return;
+    }
     const go = e.target.closest('[data-tab-go]');
-    if (go) { flushMemo(); flushMonth(); current = go.dataset.tabGo; render(); return; }
+    if (go) {
+      flushMemo();
+      flushMonth();
+      flushAllRichDocs();
+      current = go.dataset.tabGo;
+      reportNaming = false;
+      render();
+      return;
+    }
     const noteText = e.target.closest('.note-text');
     if (noteText && !e.target.closest('[data-action]')) { startNoteEdit(noteText); return; }
     const act = e.target.closest('[data-action]');
@@ -2599,6 +3100,43 @@
         saveMonthRange(Number(act.dataset.week));
         return;
       }
+      if (action === 'report-new') {
+        flushAllRichDocs();
+        reportNaming = true;
+        render();
+        return;
+      }
+      if (action === 'report-name-cancel') {
+        reportNaming = false;
+        render();
+        return;
+      }
+      if (action === 'report-select' && item && item.kind === REPORT_KIND) {
+        flushAllRichDocs();
+        activeReportId = item.id;
+        reportNaming = false;
+        render();
+        return;
+      }
+      if (action === 'report-delete' && item && item.kind === REPORT_KIND) {
+        (async () => {
+          const ok = await confirmDialog('删除周报',
+            '确定删除「' + (item.title || '未命名周报') + '」？整份周报内容会从三端一起删除。');
+          if (!ok) return;
+          const key = REPORT_DOC_PREFIX + item.id;
+          const st = richDocState(key);
+          if (st.timer) clearTimeout(st.timer);
+          st.timer = null;
+          st.dirty = false;
+          st.draft = null;
+          st.html = null;
+          store.deleteTask(item.id);
+          if (activeReportId === item.id) activeReportId = null;
+          render();
+          toast('周报已删除');
+        })();
+        return;
+      }
     }
     const rs = e.target.closest('[data-restore]');
     if (rs) { restoreSnapshot(rs.getAttribute('data-restore')); return; }
@@ -2622,7 +3160,10 @@
   });
 
   document.addEventListener('click', onViewClick);
-  document.addEventListener('selectionchange', rememberMemoSelection);
+  document.addEventListener('selectionchange', () => {
+    rememberMemoSelection();
+    scheduleFmtBubble();
+  });
   /* 星期按钮：点一下切换高亮（值本身由 checkbox 负责） */
   document.addEventListener('change', (e) => {
     const input = e.target;
@@ -2632,6 +3173,26 @@
   });
   /* 卡片底部输入框：回车/点“记下”即写入一条带时间的进展，并刷新到卡片顶部 */
   document.addEventListener('submit', (e) => {
+    const reportForm = e.target && e.target.closest ? e.target.closest('#report-new-form') : null;
+    if (reportForm) {
+      e.preventDefault();
+      const input = $('#report-name');
+      const title = (input && input.value || '').trim();
+      if (!title) {
+        toast('先写一个周报名称');
+        if (input) input.focus();
+        return;
+      }
+      flushAllRichDocs();
+      const it = Core.newItem({ kind: REPORT_KIND, title });
+      it.createdAt = new Date().toISOString();
+      it.rank = reportItems().length + 1;
+      activeReportId = it.id;
+      reportNaming = false;
+      store.saveTask(it);
+      toast('周报已创建');
+      return;
+    }
     const form = e.target && e.target.closest ? e.target.closest('.note-inline') : null;
     if (!form) return;
     e.preventDefault();
@@ -2699,7 +3260,7 @@
   store.onChange = () => render();
   /* 切走 / 息屏 / 关页面之前，把备忘录里没落盘的字存下来 */
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') { flushMemo(); flushMonth(); }
+    if (document.visibilityState === 'hidden') { flushMemo(); flushMonth(); flushAllRichDocs(); }
   });
   /* 跨零点 / 回到前台时，让日历上的「今天」和月份自己走到新的一天 */
   let monthDayStamp = today();
@@ -2715,7 +3276,8 @@
     if (document.visibilityState === 'visible') refreshMonthIfDayChanged();
   });
   setInterval(refreshMonthIfDayChanged, 60000);
-  window.addEventListener('pagehide', () => { flushMemo(); flushMonth(); });
+  window.addEventListener('pagehide', () => { flushMemo(); flushMonth(); flushAllRichDocs(); });
+  bindFmtBubble();
   render();
   store.init();
   if ('serviceWorker' in navigator) {

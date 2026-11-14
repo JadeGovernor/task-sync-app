@@ -78,6 +78,13 @@
       base.title = '创意';
       base.memo = '';           // 和琐事同款：整张备忘录只有一条，正文放在 memo 字段
       base.memoHtml = '';
+    } else if (partial && partial.kind === 'monthnote') {
+      base.title = '计划底稿';
+      base.memo = '';           // 本月排期下面那张长期计划纸
+      base.memoHtml = '';
+    } else if (partial && partial.kind === 'weekreport') {
+      base.memo = '';           // 一份周报就是一条记录，标题由用户创建时输入
+      base.memoHtml = '';
     }
     return Object.assign(base, partial || {});
   }

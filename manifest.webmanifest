@@ -1,7 +1,7 @@
 {
   "name": "效率任务 · 三端同步",
   "short_name": "效率任务",
-  "description": "生活 / 公司 / 计划 三模块任务，Mac + iPhone 三端同步，每日效率打勾",
+  "description": "创意、计划、行动三层导航，日历、七天日程与今日提醒，Mac + iPhone 三端同步",
   "lang": "zh-CN",
   "start_url": "./index.html",
   "scope": "./",

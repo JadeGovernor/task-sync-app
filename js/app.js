@@ -1,5 +1,4 @@
-/* V2 UI 层：今日聚合 + 公司(今日/明日) + 计划(排序/紧急) + 自律(每日/每周) + 习惯清单 +
- * 本月排期 + 琐事/创意备忘录 + 效率(二期占位) + 设置 */
+/* UI 层：新导航 + 今日聚合 + 点子/娱乐/排期/项目/日历/循环/日程/打卡 + 旧页面归档入口 */
 (function () {
   'use strict';
   const Core = window.Core;
@@ -25,7 +24,7 @@
   let noteDragZone = null;
   let noteDragIndex = -1;
   let lastStatus = { text: '连接中…' };
-  /* 两张备忘录（琐事 / 创意）逻辑完全一致，只是标题和落库的 kind 不同 */
+  /* 三张备忘录（琐事 / 点子 / 娱乐）逻辑一致，落库 kind 各自独立 */
   const MEMOS = {
     memo: {
       tab: 'memo', kind: 'memo', title: '琐事备忘录',
@@ -33,9 +32,14 @@
       ph: '随手记：要买的东西、待查的资料、临时冒出来的点子…'
     },
     idea: {
-      tab: 'idea', kind: 'idea', title: '创意备忘录',
+      tab: 'idea', kind: 'idea', title: '点子',
       sub: '想法一冒出来就丢进来；需要时再用上方工具栏排版。停手约 1 秒自动保存并同步三端。',
       ph: '随手记：突然想到的点子、想试的做法、产品灵感、看到的参考…'
+    },
+    fun: {
+      tab: 'fun', kind: 'fun', title: '娱乐清单',
+      sub: '想看的、想玩的、想去的都放这里；和点子分开记录，互不覆盖。停手约 1 秒自动保存。',
+      ph: '例如：想看的电影、想玩的游戏、周末想去的地方…'
     }
   };
   const memoState = {};
@@ -49,10 +53,16 @@
   const MONTH_KIND = 'monthweek';
   const MONTH_NOTE_KIND = 'monthnote';
   const REPORT_KIND = 'weekreport';
+  const CAL_NOTE_KIND = 'calendar_note';
+  const DAY_PAPER_KIND = 'daypaper';
   const WEEK_NAMES = ['第一周', '第二周', '第三周', '第四周'];
   let monthState = { key: null, drafts: {}, timer: null, dirty: false, flushing: false, rangeEdit: null };
   let activeReportId = null;
   let reportNaming = false;
+  let calendarZoom = 0;
+  let calendarComposer = null;
+  let navGroupOpen = '';
+  let navMoreOpen = false;
   const RICH_DOCS = {};
   const richDocState = (key) => {
     if (!RICH_DOCS[key]) {
@@ -85,6 +95,18 @@
   const byId = (id) => items().find((t) => t.id === id);
 
   const itemOfKind = (kind) => items().filter((t) => t.kind === kind);
+  const calendarNotes = () => itemOfKind(CAL_NOTE_KIND)
+    .filter((t) => /^\d{4}-\d{2}-\d{2}$/.test(String(t.date || '')))
+    .sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return String(a.createdAt || '') < String(b.createdAt || '') ? -1 : 1;
+    });
+  const calendarNotesOn = (date) => calendarNotes().filter((t) => t.date === date);
+  const dayPapers = () => itemOfKind(DAY_PAPER_KIND)
+    .filter((t) => /^\d{4}-\d{2}-\d{2}$/.test(String(t.date || '')));
+  const dayPaperFor = (date) => dayPapers()
+    .filter((t) => t.date === date)
+    .sort((a, b) => String(b.updatedAt || '') < String(a.updatedAt || '') ? -1 : 1)[0] || null;
   /* tab 上的「公司」数字 = 今天该做的条数（含逾期顺延），跟公司页「今日」桶、今日页「公司 · 今日到期」完全一个口径。
    * 以前用的是「未完成且到期日 >= 今天」，把逾期顺延的条目漏掉了，所以会出现「页面上 5 条、tab 上 1 条」。 */
   const workToday = () => {
@@ -100,6 +122,39 @@
       return st && !st.done;
     }).length;
   };
+  const habitPendingCount = () => habitsAction();
+  const loopPendingCount = () => {
+    const d = today();
+    return itemOfKind('loop').filter((t) => {
+      const st = Core.loopOn(t, d);
+      return st && !st.done;
+    }).length;
+  };
+  const calendarNearDates = (days) => {
+    const d = today();
+    const out = [];
+    for (let i = 0; i < (days || 7); i += 1) out.push(Core.shiftDate(d, i));
+    return out;
+  };
+  const calendarNearItems = () => {
+    const set = new Set(calendarNearDates(7));
+    return calendarNotes().filter((t) => set.has(t.date));
+  };
+  const calendarNearCount = () => calendarNearItems().length;
+  const nearPlanItems = () => {
+    const d = today();
+    const last = Core.shiftDate(d, 6);
+    return planOrdered().active.filter((e) => {
+      const end = e.item.rangeEnd;
+      if (!end || end > last) return false;
+      if (e.st.overdue) return true;
+      return end >= d;
+    });
+  };
+  const hotTimerCount = () => todayTimerRows().filter((x) => !x.t.done).length;
+  const todayPendingCount = () =>
+    hotTimerCount() + loopPendingCount() + habitPendingCount() +
+    nearPlanItems().length + calendarNearItems().length;
 
   /* ---------- 提示 ---------- */
   let toastTimer = null;
@@ -430,6 +485,12 @@
       '<button class="btn btn-primary" type="submit">＋ 加为循环任务</button>' +
       '</form></section>';
   }
+  function renderLoopPage() {
+    return renderLoopSection().replace(
+      '<h3>循环任务 · 每周固定要做',
+      '<h3>循环 · 每周固定要做'
+    );
+  }
 
   /* ---------- 计划排序 ---------- */
   function planOrdered() {
@@ -447,7 +508,7 @@
     const t = e.item, st = e.st;
     const isMini = minimal != null ? minimal : !!compact;
     const chips = [];
-    chips.push({ text: Core.kindLabel('plan'), cls: chipClsFor('plan') });
+    chips.push({ text: '项目', cls: chipClsFor('plan') });
     if (t.rangeStart || t.rangeEnd) {
       chips.push({ text: (t.rangeStart || '?') + ' → ' + (t.rangeEnd || '持续'), cls: 'dim' });
     }
@@ -727,6 +788,371 @@
       editRoom;
   }
 
+  /* ---------- 日历：独立记录，一条记录一个同步条目 ---------- */
+  function monthYearLabel(y, m) {
+    return y + ' 年 ' + (m + 1) + ' 月';
+  }
+  function addMonths(y, m, n) {
+    const d = new Date(y, m + n, 1);
+    return { y: d.getFullYear(), m: d.getMonth() };
+  }
+  function calendarViewMonths() {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    if (calendarZoom === 0) return [{ y, m }];
+    if (calendarZoom === 1) return [-1, 0, 1].map((n) => addMonths(y, m, n));
+    return Array.from({ length: 12 }, (_, i) => addMonths(y, m, i - 3));
+  }
+  function calendarMonthGrid(y, m, notesByDate) {
+    const first = new Date(y, m, 1);
+    const days = new Date(y, m + 1, 0).getDate();
+    const offset = (first.getDay() + 6) % 7;
+    const cells = [];
+    for (let i = 0; i < offset; i += 1) cells.push('<span class="cal-day is-blank" aria-hidden="true"></span>');
+    const todayS = today();
+    const noteLimit = calendarZoom === 0 ? 2 : calendarZoom === 1 ? 1 : 0;
+    for (let day = 1; day <= days; day += 1) {
+      const date = y + '-' + p2(m + 1) + '-' + p2(day);
+      const notes = notesByDate[date] || [];
+      const visible = notes.slice(0, noteLimit);
+      cells.push('<div class="cal-day' + (date === todayS ? ' is-today' : '') +
+        (notes.length ? ' has-notes' : '') + '" data-action="calendar-add" data-date="' + date + '">' +
+        '<div class="cal-day-head"><b>' + day + '</b>' +
+          (date === todayS ? '<em>今</em>' : '') +
+          (notes.length ? '<i class="cal-dot" title="' + notes.length + ' 条记录"></i>' : '') +
+        '</div>' +
+        (visible.length ? '<div class="cal-day-notes">' + visible.map((n) =>
+          '<span class="cal-mini-note" data-action="calendar-edit" data-id="' + n.id + '" title="' +
+            esc(n.text || '') + '">' + esc(n.text || '') + '</span>').join('') + '</div>' : '') +
+      '</div>');
+    }
+    while (cells.length % 7) cells.push('<span class="cal-day is-blank" aria-hidden="true"></span>');
+    return '<section class="cal-month-card">' +
+      '<h4>' + monthYearLabel(y, m) + '</h4>' +
+      '<div class="cal-weekdays">' + ['一', '二', '三', '四', '五', '六', '日'].map((x) => '<span>' + x + '</span>').join('') + '</div>' +
+      '<div class="cal-grid">' + cells.join('') + '</div>' +
+    '</section>';
+  }
+  function calendarRecordsSorted() {
+    const d = today();
+    return calendarNotes().slice().sort((a, b) => {
+      const da = Math.abs(Core.dayDiff(d, a.date));
+      const db = Math.abs(Core.dayDiff(d, b.date));
+      if (da !== db) return da - db;
+      if (a.date !== b.date) return a.date > b.date ? -1 : 1;
+      return String(a.createdAt || '') < String(b.createdAt || '') ? -1 : 1;
+    });
+  }
+  function calendarRecordsHTML() {
+    const list = calendarRecordsSorted();
+    if (!list.length) return emptyBox('还没有日历记录。点任意日期即可写一条。');
+    return '<div class="cal-records">' + list.map((n) => {
+      const d = Core.parseDate(n.date);
+      return '<div class="cal-record-item" data-id="' + n.id + '">' +
+        '<button class="cal-record-main" type="button" data-action="calendar-edit" data-id="' + n.id + '">' +
+          '<span class="cal-record-date">' + d.getMonth() + 1 + '月' + d.getDate() + '日 · ' + Core.weekdayCN(n.date) + '</span>' +
+          '<span class="cal-record-text">' + esc(n.text || '') + '</span>' +
+        '</button>' +
+        '<button class="cal-record-del" type="button" data-action="calendar-del" data-id="' + n.id + '" title="删除这条记录">✕</button>' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+  function renderCalendar() {
+    const notesByDate = {};
+    calendarNotes().forEach((n) => {
+      if (!notesByDate[n.date]) notesByDate[n.date] = [];
+      notesByDate[n.date].push(n);
+    });
+    const months = calendarViewMonths();
+    return section('日历',
+      '<div class="cal-toolbar">' +
+        '<div class="cal-zoom" role="group" aria-label="日历缩放">' +
+          [['0', '本月'], ['1', '三个月'], ['2', '十二个月']].map((x) =>
+            '<button type="button" class="cal-zoom-btn' + (String(calendarZoom) === x[0] ? ' is-on' : '') +
+              '" data-action="calendar-zoom" data-zoom="' + x[0] + '">' + x[1] + '</button>').join('') +
+        '</div>' +
+        '<span class="hint tight">点日期写记录；回车保存，可连续添加多条。绿点表示当天有记录。</span>' +
+      '</div>' +
+      '<div class="cal-months zoom-' + calendarZoom + '">' +
+        months.map((x) => calendarMonthGrid(x.y, x.m, notesByDate)).join('') +
+      '</div>', '', 'acc-blue') +
+      section('日历记录 · 从最近到最远', calendarRecordsHTML() +
+        '<p class="hint tight">点一条即可改文字；✕ 删除。记录会同步到三端，并在今日页提醒未来 7 天内的内容。</p>', '', 'acc-green');
+  }
+  function closeCalendarComposer() {
+    if (calendarComposer && calendarComposer.el) calendarComposer.el.remove();
+    calendarComposer = null;
+  }
+  function openCalendarComposer(date, anchor, note) {
+    closeCalendarComposer();
+    const el = document.createElement('div');
+    el.className = 'cal-composer';
+    el.innerHTML = '<div class="cal-composer-head"><b>' + esc(Core.fmtCN(date)) + '</b>' +
+      '<button type="button" data-cal-close="1" aria-label="关闭">✕</button></div>' +
+      '<form><input type="text" maxlength="300" placeholder="写点事情，回车保存…" value="' +
+        esc(note ? note.text || '' : '') + '" autocomplete="off" /></form>' +
+      '<div class="hint">回车保存 · Esc 取消' + (note ? ' · 修改后可直接删除' : ' · 同一天可添加多条') + '</div>';
+    document.body.appendChild(el);
+    const form = el.querySelector('form');
+    const input = el.querySelector('input');
+    const rect = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+    const width = Math.min(360, window.innerWidth - 16);
+    el.style.width = width + 'px';
+    if (rect) {
+      let left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+      let top = rect.bottom + 8;
+      const h = el.getBoundingClientRect().height || 130;
+      if (top + h > window.innerHeight - 8) top = Math.max(8, rect.top - h - 8);
+      el.style.left = Math.round(left) + 'px';
+      el.style.top = Math.round(top) + 'px';
+    } else {
+      el.style.left = Math.round((window.innerWidth - width) / 2) + 'px';
+      el.style.top = '20vh';
+    }
+    calendarComposer = { el, date, note };
+    input.focus();
+    input.select();
+    const close = () => closeCalendarComposer();
+    el.querySelector('[data-cal-close]').addEventListener('click', close);
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) { input.focus(); return; }
+      if (note) {
+        store.saveTask(Object.assign({}, note, {
+          text, title: text, updatedAt: new Date().toISOString()
+        }));
+        toast('日历记录已修改');
+      } else {
+        const it = Core.newItem({ kind: CAL_NOTE_KIND, date, text, title: text });
+        it.createdAt = new Date().toISOString();
+        store.saveTask(it);
+        toast('已记到 ' + Core.fmtCN(date));
+      }
+      close();
+    });
+    const outside = (e) => {
+      if (!el.isConnected) { document.removeEventListener('pointerdown', outside, true); return; }
+      if (!el.contains(e.target) && !(anchor && anchor.contains && anchor.contains(e.target))) {
+        close();
+        document.removeEventListener('pointerdown', outside, true);
+      }
+    };
+    setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
+  }
+
+  /* ---------- 日程：今天起 7 张按日期绑定的富文本纸 ---------- */
+  const dayPaperKey = (date) => 'day:' + date;
+  const dayPaperEditorId = (date) => 'daypaper-' + date;
+  const dayPaperToolbarId = (date) => 'daypaper-toolbar-' + date;
+  function dayPaperTextNow(date) {
+    const st = richDocState(dayPaperKey(date));
+    if (st && st.draft != null) return st.draft;
+    const item = dayPaperFor(date);
+    return item && typeof item.memo === 'string' ? item.memo : '';
+  }
+  function dayPaperHtmlNow(date) {
+    const st = richDocState(dayPaperKey(date));
+    if (st && st.html != null) return st.html;
+    const item = dayPaperFor(date);
+    const text = dayPaperTextNow(date);
+    return memoHtmlForItem(item, text) || memoTextToHtml(text);
+  }
+  function dayPaperStamp(date) {
+    const item = dayPaperFor(date);
+    if (!item || !item.updatedAt) return '自动保存';
+    const d = new Date(item.updatedAt);
+    if (isNaN(d.getTime())) return '自动保存';
+    return '已保存 · ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  }
+  function flushDayPaper(date) {
+    const key = dayPaperKey(date);
+    const st = richDocState(key);
+    if (st.timer) { clearTimeout(st.timer); st.timer = null; }
+    if (!st.dirty && st.draft == null) return;
+    const ed = document.getElementById(dayPaperEditorId(date));
+    const text = ed ? memoEditorPlain(ed) : st.draft;
+    if (text == null) return;
+    const html = ed ? memoEditorHtml(ed) : (st.html != null ? st.html : memoTextToHtml(text));
+    st.dirty = false;
+    const item = dayPaperFor(date);
+    const prevText = item && typeof item.memo === 'string' ? item.memo : '';
+    const prevHtml = item && typeof item.memoHtml === 'string' ? item.memoHtml : '';
+    if (text === prevText && html === prevHtml) {
+      st.draft = null;
+      st.html = null;
+      return;
+    }
+    const base = item || Core.newItem({ kind: DAY_PAPER_KIND, date, title: '日程 ' + date });
+    st.draft = null;
+    st.html = null;
+    st.flushing = true;
+    try {
+      store.saveTask(Object.assign({}, base, {
+        kind: DAY_PAPER_KIND,
+        date,
+        memo: text,
+        memoHtml: html || memoTextToHtml(text),
+        updatedAt: new Date().toISOString()
+      }));
+    } finally {
+      st.flushing = false;
+    }
+  }
+  function flushAllDayPapers() {
+    Object.keys(RICH_DOCS)
+      .filter((key) => key.indexOf('day:') === 0)
+      .forEach((key) => flushDayPaper(key.slice(4)));
+  }
+  function dayPaperMeta(date) {
+    const state = document.getElementById('daypaper-state-' + date);
+    if (state) state.textContent = richDocState(dayPaperKey(date)).dirty ? '保存中…' : dayPaperStamp(date);
+  }
+  function dayPaperOnInput(date, ed) {
+    const st = richDocState(dayPaperKey(date));
+    st.dirty = true;
+    st.draft = memoEditorPlain(ed);
+    st.html = memoEditorHtml(ed);
+    ed.classList.toggle('is-empty', !st.draft.trim() && !ed.querySelector('table,hr,img,[data-flow]'));
+    dayPaperMeta(date);
+    if (st.timer) clearTimeout(st.timer);
+    st.timer = setTimeout(() => {
+      st.timer = null;
+      flushDayPaper(date);
+      dayPaperMeta(date);
+    }, 800);
+  }
+  function applyDayPaperText(date, text) {
+    const key = dayPaperKey(date);
+    const st = richDocState(key);
+    const oldText = dayPaperTextNow(date);
+    const oldHtml = dayPaperHtmlNow(date);
+    const html = memoRichFromText(oldText, oldHtml, text);
+    const ed = document.getElementById(dayPaperEditorId(date));
+    if (ed) memoSetEditor(ed, html);
+    st.draft = normalizeMemoPlain(text);
+    st.html = html;
+    st.dirty = true;
+    flushDayPaper(date);
+    dayPaperMeta(date);
+  }
+  function renderAgenda() {
+    const dates = calendarNearDates(7);
+    return '<section class="card agenda-intro"><h3>未来 7 天日程</h3>' +
+      '<p class="hint tight">每天一张富文本纸，从一行开始，写多少长多少。跨天后如果前一天还有内容，会自动滚到当天最前面，并标注「昨天剩下内容」。</p></section>' +
+      dates.map((date, i) => {
+        const key = dayPaperKey(date);
+        const st = richDocState(key);
+        const text = st.draft != null ? st.draft : dayPaperTextNow(date);
+        const html = sanitizeMemoHtml(dayPaperHtmlNow(date));
+        const empty = !String(text || '').trim() && !memoHtmlHasContent(html);
+        const d = Core.parseDate(date);
+        return '<section class="card agenda-card' + (i === 0 ? ' is-today' : '') + '">' +
+          '<div class="agenda-head"><div><h3>' + Core.fmtCN(date) + '</h3>' +
+            '<span class="hint tight">' + (i === 0 ? '今天' : '未来第 ' + (i + 1) + ' 天') + '</span></div>' +
+            '<span class="hint tight" id="daypaper-state-' + date + '">' + esc(dayPaperStamp(date)) + '</span></div>' +
+          '<div class="memo-editor-shell day-paper-shell">' +
+            richToolbarHTML(dayPaperToolbarId(date)) +
+            '<div id="' + dayPaperEditorId(date) + '" class="memo-editor day-paper-editor' +
+              (empty ? ' is-empty' : '') + '" contenteditable="true" role="textbox" aria-multiline="true" ' +
+              'spellcheck="false" data-doc-key="' + esc(key) + '" ' +
+              'data-placeholder="' + esc(i === 0 ? '今天要做什么？' : '这一天先留白，想到再写…') + '">' +
+              html + '</div>' +
+          '</div>' +
+          '<div class="timer-add day-timer-add">' +
+            '<span class="timer-add-label">' + Core.TIMER_MARK + ' 提醒</span>' +
+            '<input type="date" data-day-timer-date="' + date + '" value="' + date + '" />' +
+            '<button class="btn btn-sm" type="button" data-action="day-timer-add" data-date="' + date + '">加到光标那一行</button>' +
+          '</div>' +
+        '</section>';
+      }).join('');
+  }
+  let dayRolloverRunning = false;
+  let dayRolloverQueued = false;
+  function dayPaperHasText(item) {
+    return !!String(item && item.memo || '').trim() ||
+      !!memoHtmlHasContent(item && item.memoHtml);
+  }
+  function prependRolloverLabel(html, label) {
+    const box = document.createElement('div');
+    box.innerHTML = sanitizeMemoHtml(html);
+    const mark = document.createElement('b');
+    mark.className = 'day-rollover-mark';
+    mark.setAttribute('data-rollover', '1');
+    mark.textContent = label;
+    const first = box.firstElementChild;
+    if (first && first.tagName !== 'TABLE' && first.tagName !== 'HR' &&
+        first.tagName !== 'IMG' && !first.hasAttribute('data-flow')) {
+      first.insertBefore(mark, first.firstChild);
+    } else {
+      box.insertBefore(mark, box.firstChild);
+    }
+    return box.innerHTML;
+  }
+  function rollDayPapers() {
+    if (dayRolloverRunning) return;
+    const d = today();
+    const past = dayPapers()
+      .filter((p) => p.date < d && dayPaperHasText(p))
+      .sort((a, b) => a.date < b.date ? -1 : 1);
+    if (!past.length) return;
+    const target = dayPaperFor(d);
+    const targetText = target && typeof target.memo === 'string' ? target.memo : '';
+    const targetHtml = target ? (target.memoHtml || memoTextToHtml(targetText)) : '';
+    const chunks = past.map((p) => {
+      const label = p.date === Core.shiftDate(d, -1)
+        ? '昨天剩下内容：'
+        : shortDay(p.date) + ' 剩下内容：';
+      const text = String(p.memo || '').trim();
+      const html = sanitizeMemoHtml(p.memoHtml || memoTextToHtml(text));
+      return {
+        label, text, html,
+        plain: label + text,
+        rich: prependRolloverLabel(html, label)
+      };
+    });
+    const spacer = '<div><br></div><div><br></div>';
+    const mergedText = chunks.map((x) => x.plain).join('\n\n\n') +
+      (String(targetText || '').trim() ? '\n\n\n' + targetText : '');
+    const mergedHtml = chunks.map((x) => x.rich).join(spacer) +
+      (memoHtmlHasContent(targetHtml) || String(targetText || '').trim() ? spacer + targetHtml : '');
+    dayRolloverRunning = true;
+    try {
+      past.forEach((p) => {
+        store.saveTask(Object.assign({}, p, {
+          memo: '',
+          memoHtml: '',
+          rolledTo: d,
+          rolledAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }));
+      });
+      const base = target || Core.newItem({ kind: DAY_PAPER_KIND, date: d, title: '日程 ' + d });
+      store.saveTask(Object.assign({}, base, {
+        kind: DAY_PAPER_KIND,
+        date: d,
+        memo: mergedText,
+        memoHtml: mergedHtml || memoTextToHtml(mergedText),
+        updatedAt: new Date().toISOString()
+      }));
+      toast('已把之前没写完的日程滚到今天');
+    } finally {
+      dayRolloverRunning = false;
+    }
+  }
+  function queueDayRollover() {
+    if (dayRolloverQueued) return;
+    dayRolloverQueued = true;
+    setTimeout(() => {
+      dayRolloverQueued = false;
+      rollDayPapers();
+    }, 120);
+  }
+
   /* ---------- 计划底稿 + 周报：都能直接写富文本，按任务条目同步 ---------- */
   const REPORT_DOC_PREFIX = 'report:';
   const monthNoteItem = () => items().find((t) => t && t.kind === MONTH_NOTE_KIND) || null;
@@ -764,6 +1190,17 @@
     const base = richDocBase(key);
     return base && typeof base.memo === 'string' ? base.memo : '';
   }
+  function richDocTextNow(key) {
+    const st = richDocState(key);
+    return st && st.draft != null ? st.draft : richDocText(key);
+  }
+  function richDocHtmlNow(key) {
+    const st = richDocState(key);
+    if (st && st.html != null) return st.html;
+    const base = richDocBase(key);
+    const text = richDocText(key);
+    return memoHtmlForItem(base, text) || memoTextToHtml(text);
+  }
   function richDocStamp(key) {
     const base = richDocBase(key);
     if (!base || !base.updatedAt) return key === MONTH_NOTE_KIND ? '还没有内容' : '自动保存';
@@ -790,6 +1227,13 @@
           'data-doc-key="' + esc(key) + '" data-placeholder="' + esc(ph) + '">' + cleanHtml + '</div>' +
       '</div>' +
       '<div class="doc-foot"><span class="hint" id="' + spec.stateId + '">' + esc(richDocStamp(key)) + '</span></div>';
+  }
+  function richDocTimerAddHTML(key) {
+    return '<div class="timer-add doc-timer-add">' +
+      '<span class="timer-add-label">' + Core.TIMER_MARK + ' 提醒</span>' +
+      '<input type="date" data-doc-timer-date="' + esc(key) + '" value="' + esc(today()) + '" />' +
+      '<button class="btn btn-sm" type="button" data-action="doc-timer-add" data-doc-key="' + esc(key) + '">加到光标那一行</button>' +
+    '</div>';
   }
   function flushRichDoc(key) {
     const spec = richDocSpec(key);
@@ -830,7 +1274,25 @@
     }
   }
   function flushAllRichDocs() {
-    Object.keys(RICH_DOCS).forEach((key) => flushRichDoc(key));
+    Object.keys(RICH_DOCS).forEach((key) => {
+      if (key.indexOf('day:') === 0) flushDayPaper(key.slice(4));
+      else flushRichDoc(key);
+    });
+  }
+  function applyRichDocText(key, text) {
+    const spec = richDocSpec(key);
+    if (!spec) return;
+    const st = richDocState(key);
+    const oldText = richDocTextNow(key);
+    const oldHtml = richDocHtmlNow(key);
+    const html = memoRichFromText(oldText, oldHtml, text);
+    const ed = document.getElementById(spec.editorId);
+    if (ed) memoSetEditor(ed, html);
+    st.draft = normalizeMemoPlain(text);
+    st.html = html;
+    st.dirty = true;
+    flushRichDoc(key);
+    richDocMeta(key);
   }
   function richDocMeta(key) {
     const spec = richDocSpec(key);
@@ -865,6 +1327,7 @@
       '<h3>计划底稿 <span class="cnt" id="monthnote-count">' + text.length + ' 字</span></h3>' +
       '<p class="hint tight">先把所有想做的事都放在这张纸上；再挑出最近一个月要推进的，填到上面的四周排期里。停手约 1 秒自动保存并同步三端。</p>' +
       richDocShellHTML(MONTH_NOTE_KIND) +
+      richDocTimerAddHTML(MONTH_NOTE_KIND) +
       '</section>';
   }
   function reportWhen(item) {
@@ -904,6 +1367,7 @@
           '</div>' +
           '<div class="report-paper-scroll">' +
             richDocShellHTML(REPORT_DOC_PREFIX + active.id) +
+            richDocTimerAddHTML(REPORT_DOC_PREFIX + active.id) +
           '</div>' +
         '</article>'
       : '<div class="report-empty"><b>还没有周报</b><span>点左上角「＋ 新增周报」，输入名称后按回车，左侧就会出现一张可点击的周报卡片。</span></div>';
@@ -1005,6 +1469,7 @@
             node.setAttribute('alt', String(attr.value || '').slice(0, 120));
             return;
           }
+          if (tag === 'B' && name === 'data-rollover' && attr.value === '1') return;
           if (tag === 'DIV' && name === 'data-flow' &&
               /^[a-z0-9_-]{4,200000}$/i.test(attr.value)) return;
           node.removeAttribute(attr.name);
@@ -2502,9 +2967,14 @@
         '<button class="sub-del" type="button" data-action="sub-del" data-sub-line="' + x.line + '" title="删掉这条进展">✕</button>' +
       '</div>').join('') + '</div>';
   }
-  function timerRowHTML(t, src, tab) {
+  function timerRowHTML(t, src, sourceKey) {
     const done = !!t.done;
+    const key = String(sourceKey || '');
+    const isDay = key.indexOf('day:') === 0;
+    const tab = key.indexOf('memo:') === 0 ? key.slice(5) : '';
     return '<div class="timer-item" data-line="' + t.line + '"' +
+      (key ? ' data-src-key="' + esc(key) + '"' : '') +
+      (isDay ? ' data-src-day="' + esc(key.slice(4)) + '"' : '') +
       (tab ? ' data-src-tab="' + esc(tab) + '"' : '') + '>' +
       '<div class="timer-row is-' + t.state + (done ? ' is-done' : '') + '">' +
         '<label class="cb timer-cb" title="' + (done ? '取消打勾' : '打勾完成') + '">' +
@@ -2524,6 +2994,45 @@
   function timersWithSubs(text) {
     return Core.timersOf(text, today()).map((t) => Object.assign({}, t, { subs: Core.subLinesOf(text, t.line) }));
   }
+  function timerSourceFromKey(key) {
+    const raw = String(key || '');
+    if (raw.indexOf('memo:') === 0) {
+      const tab = raw.slice(5);
+      if (!MEMOS[tab]) return null;
+      return {
+        key: raw, type: 'memo', tab,
+        text: () => memoTextNow(tab),
+        apply: (text) => applyMemoText(tab, text),
+        refresh: () => refreshAfterTimerEdit(tab)
+      };
+    }
+    if (raw.indexOf('day:') === 0) {
+      const date = raw.slice(4);
+      return {
+        key: raw, type: 'day', date,
+        text: () => dayPaperTextNow(date),
+        apply: (text) => applyDayPaperText(date, text),
+        refresh: () => { if (current === 'today') refreshTodayTimers(); }
+      };
+    }
+    if (richDocSpec(raw)) {
+      return {
+        key: raw, type: 'doc',
+        text: () => richDocTextNow(raw),
+        apply: (text) => applyRichDocText(raw, text),
+        refresh: () => { if (current === 'today') refreshTodayTimers(); }
+      };
+    }
+    return null;
+  }
+  function timerSourceFromRow(row, fallbackTab) {
+    let key = row && row.getAttribute ? row.getAttribute('data-src-key') : '';
+    if (!key) {
+      const tab = row && row.getAttribute ? row.getAttribute('data-src-tab') : '';
+      key = 'memo:' + (tab || fallbackTab || '');
+    }
+    return timerSourceFromKey(key);
+  }
   function timerBoardInner(tab) {
     const list = timersWithSubs(memoTextNow(tab));
     if (!list.length) return '';
@@ -2535,7 +3044,7 @@
         (over ? '<b class="t-over">已过期 ' + over + '</b>' : '') +
         (soon ? '<b class="t-soon">3 天内 ' + soon + '</b>' : '') +
         '<span class="timer-head-hint">整条可拖动排序 · 紧急的自动置顶</span></div>' +
-      list.map((t) => timerRowHTML(t)).join('');
+      list.map((t) => timerRowHTML(t, '', 'memo:' + tab)).join('');
   }
   function timerBoardHTML(tab) {
     return '<div class="timer-board" id="memo-timers">' + timerBoardInner(tab) + '</div>';
@@ -2558,8 +3067,8 @@
     if (!row || row.classList.contains('is-editing')) return;
     const span = row.querySelector('[data-action="timer-edit"]');
     if (!span) return;
-    const tab = row.getAttribute('data-src-tab') || fallbackTab;
-    if (!MEMOS[tab]) return;
+    const source = timerSourceFromRow(row, fallbackTab);
+    if (!source) return;
     const line = Number(row.getAttribute('data-line'));
     const before = span.textContent === EMPTY_LINE_TEXT ? '' : span.textContent;
     row.classList.add('is-editing');
@@ -2576,9 +3085,9 @@
       if (settled) return;
       settled = true;
       const v = inp.value.replace(/\s+/g, ' ').trim();
-      if (!save || v === before) { refreshAfterTimerEdit(tab); return; }
-      applyMemoText(tab, Core.setLineText(memoTextNow(tab), line, v));
-      refreshAfterTimerEdit(tab);
+      if (!save || v === before) { source.refresh(); return; }
+      source.apply(Core.setLineText(source.text(), line, v));
+      source.refresh();
       toast(v ? '已改好这一行' : '这一行清空了');
     };
     inp.addEventListener('keydown', (e) => {
@@ -2591,23 +3100,23 @@
      删错了就点提示条上的「撤回」把原来那一块放回去。 */
   function toggleTimerDone(row, fallbackTab, on) {
     if (!row) return;
-    const tab = row.getAttribute('data-src-tab') || fallbackTab;
-    if (!MEMOS[tab]) return;
+    const source = timerSourceFromRow(row, fallbackTab);
+    if (!source) return;
     const line = Number(row.getAttribute('data-line'));
-    const before = memoTextNow(tab);
+    const before = source.text();
     if (!on) {                                   // 手写的 ✅ 想取消：只把 ✅ 去掉，行留着
-      applyMemoText(tab, Core.setLineDone(before, line, false));
-      refreshAfterTimerEdit(tab);
+      source.apply(Core.setLineDone(before, line, false));
+      source.refresh();
       toast('已取消打勾');
       return;
     }
     const after = Core.deleteLineBlock(before, line);
-    applyMemoText(tab, after);
-    refreshAfterTimerEdit(tab);
+    source.apply(after);
+    source.refresh();
     toastUndo('打勾了 · 这件事已划掉', () => {
-      if (memoTextNow(tab) !== after) { toast('这行刚改过，就不撤回了'); return; }
-      applyMemoText(tab, before);
-      refreshAfterTimerEdit(tab);
+      if (source.text() !== after) { toast('这行刚改过，就不撤回了'); return; }
+      source.apply(before);
+      source.refresh();
       toast('已撤回');
     });
   }
@@ -2767,24 +3276,63 @@
     const hot = [];
     Object.keys(MEMOS).forEach((tab) => {
       timersWithSubs(Core.memoText(items(), MEMOS[tab].kind)).forEach((t) => {
-        if (t.days <= 0) hot.push({ t, src: MEMOS[tab].title.replace('备忘录', ''), tab });
+        if (t.days <= 0) {
+          hot.push({
+            t,
+            src: MEMOS[tab].title.replace('备忘录', ''),
+            sourceKey: 'memo:' + tab
+          });
+        }
+      });
+    });
+    dayPapers().forEach((paper) => {
+      timersWithSubs(paper.memo || '').forEach((t) => {
+        if (t.days <= 0) {
+          hot.push({
+            t,
+            src: '日程 ' + shortDay(paper.date),
+            sourceKey: 'day:' + paper.date
+          });
+        }
+      });
+    });
+    const monthNote = monthNoteItem();
+    if (monthNote) {
+      timersWithSubs(monthNote.memo || '').forEach((t) => {
+        if (t.days <= 0) {
+          hot.push({ t, src: '排期底稿', sourceKey: MONTH_NOTE_KIND });
+        }
+      });
+    }
+    reportItems().forEach((r) => {
+      timersWithSubs(r.memo || '').forEach((t) => {
+        if (t.days <= 0) {
+          hot.push({
+            t,
+            src: '周报 · ' + (r.title || '未命名'),
+            sourceKey: REPORT_DOC_PREFIX + r.id
+          });
+        }
       });
     });
     /* 过期的永远压在今天的上面；同一档里按正文顺序 —— 也就是你在板上拖出来的顺序 */
     const rank = { over: 0, today: 1 };
-    const tabs = Object.keys(MEMOS);
+    const sources = Object.keys(MEMOS).map((tab) => 'memo:' + tab)
+      .concat(dayPapers().map((p) => 'day:' + p.date))
+      .concat([MONTH_NOTE_KIND])
+      .concat(reportItems().map((r) => REPORT_DOC_PREFIX + r.id));
     hot.sort((a, b) => {
       const ra = rank[a.t.state] == null ? 9 : rank[a.t.state];
       const rb = rank[b.t.state] == null ? 9 : rank[b.t.state];
       if (ra !== rb) return ra - rb;
       if (a.t.line !== b.t.line) return a.t.line - b.t.line;   // 同一档里按正文顺序（拖出来的顺序）
-      return tabs.indexOf(a.tab) - tabs.indexOf(b.tab);        // 行号一样时按 琐事 → 创意
+      return sources.indexOf(a.sourceKey) - sources.indexOf(b.sourceKey);
     });
     return hot;
   }
-  const TODAY_TIMER_HINT = '琐事 / 创意里标了倒计时、今天到期或已经过期的那几句。' +
-    '方框打勾 = 这件事做完了，整行（连它的进展）直接从琐事 / 创意里划掉，误点可在提示条上「撤回」；' +
-    '点字改内容 · 改日期 · ＋进展补记 · ✕ 只去掉倒计时（正文那句话留着）—— 改的都是琐事 / 创意里那一行，不用再回去改；' +
+  const TODAY_TIMER_HINT = '琐事 / 点子 / 娱乐 / 日程 / 排期底稿 / 周报里标了提醒、今天到期或已经过期的那几句。' +
+    '方框打勾 = 这件事做完了，整行（连它的进展）直接从原白纸里划掉，误点可在提示条上「撤回」；' +
+    '点字改内容 · 改日期 · ＋进展补记 · ✕ 只去掉倒计时（正文那句话留着）—— 改的都是原白纸里那一行，不用再回去改；' +
     '整条可拖动排序（只在同一张备忘录里生效）。';
   function todayTimersBodyHTML() {
     const hot = todayTimerRows();
@@ -2792,8 +3340,8 @@
     const pend = hot.filter((x) => !x.t.done);
     const done = hot.filter((x) => x.t.done);
     return '<p class="hint tight">' + TODAY_TIMER_HINT + '</p>' +
-      pend.map((x) => timerRowHTML(x.t, x.src, x.tab)).join('') +
-      done.map((x) => timerRowHTML(x.t, x.src, x.tab)).join('');
+      pend.map((x) => timerRowHTML(x.t, x.src, x.sourceKey)).join('') +
+      done.map((x) => timerRowHTML(x.t, x.src, x.sourceKey)).join('');
   }
   function refreshTodayTimers() {
     if (current !== 'today') return;
@@ -2808,93 +3356,94 @@
     const doneN = hot.length - pend.length;
     const over = pend.filter((x) => x.t.state === 'over').length;
     const head = pend.length
-      ? '倒计时提醒 · ' + pend.length + ' 条' + (doneN ? ' · 已打勾 ' + doneN : '') +
+      ? '今日提醒 · ' + pend.length + ' 条' + (doneN ? ' · 已打勾 ' + doneN : '') +
         (over ? ' · 已过期 ' + over : '')
-      : '倒计时提醒 · 今天的都打勾了 ✓ · 已打勾 ' + doneN;
+      : '今日提醒 · 今天的都打勾了 ✓ · 已打勾 ' + doneN;
     return section(head, '<div id="today-timers">' + todayTimersBodyHTML() + '</div>',
       '', over ? 'acc-red' : 'acc-amber');
   }
 
-  /* ---------- 今日首页（公司 + 计划 + 自律 聚合） ---------- */
+  /* ---------- 今日：富文本提醒 → 循环 → 打卡 → 近七天项目 → 近七周日历 ---------- */
   function renderToday() {
     const d = today();
     const te = Core.todayEntries(items(), checkins(), d);
-    const pct = te.total ? Math.round((te.done / te.total) * 100) : 0;
-
-    const workRow = (e, compact) => {
-      const chips = [];
-      chips.push({ text: '公司', cls: 'm-work' });
-      if (compact) return cardHTML(e.item, { check: true, done: true, date: d, chips, compact: true, minimal: true });
-      if (e.overdue) chips.push({ text: '逾期自动顺延', cls: 'warn' });
-      if (e.item.due) chips.push({ text: e.item.due, cls: 'dim' });
-      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, notesList: true, hot: e.overdue && !e.done });
-    };
-    const habitRowToday = (e, compact) => {
-      const chips = [{ text: '自律 · 每日', cls: 'm-life' }];
-      if (compact) return cardHTML(e.item, { check: true, done: true, date: d, chips, compact: true, minimal: true });
-      if (e.missed) chips.push({ text: '昨日未打勾', cls: 'warn' });
-      return cardHTML(e.item, { check: true, done: e.done, date: d, chips, notesList: true, softGreen: e.missed && !e.done });
-    };
-    /* 未勾在上，已勾移到最下面并紧凑显示 */
-    const splitRows = (list, build) => {
-      const pend = list.filter((e) => !e.done).map((e) => build(e, false)).join('');
-      const done = list.filter((e) => e.done);
-      return pend + doneGrid(done.map((e) => build(e, true)));
-    };
-    const workRowsHtml = splitRows(te.work, workRow);
-    const habitHtml = splitRows(te.habits, habitRowToday);
-
-    /* 计划：紧急优先，首页只摆前 5 条 */
-    const plans = planOrdered().active;
-    const planTop = plans.slice(0, 5);
-    const planRowToday = (e) => {
-      const t = e.item;
-      const chips = [{ text: '计划', cls: 'm-plan' }];
-      if (t.rangeStart || t.rangeEnd) chips.push({ text: (t.rangeStart || '?') + ' → ' + (t.rangeEnd || '持续'), cls: 'dim' });
-      if (e.st.overdue) chips.push({ text: '已拖延 ' + e.st.overdueDays + ' 天未完成', cls: 'over' });
-      else if (e.st.urgent) chips.push({ text: '紧急 · 剩 ' + Math.max(0, Core.dayDiff(d, t.rangeEnd)) + ' 天', cls: 'warn' });
-      /* 可以直接打勾：勾上等于「完成归档」，和计划页的「完成」按钮同一套逻辑（可恢复） */
-      return cardHTML(t, { check: true, checkAction: 'plan-done', done: false, date: d, chips, notesList: true, hot: e.st.urgent || e.st.overdue });
-    };
-    const planHtml = planTop.map(planRowToday).join('') +
-      (plans.length > planTop.length
-        ? '<div class="more-line">还有 ' + (plans.length - planTop.length) + ' 条计划在进行中 ' + goBtn('plan', '去计划页') + '</div>'
-        : '');
-
-    /* 循环任务：今天该做的置顶；打勾后从今日消失（沉到公司页底部） */
     const loopAll = te.loops;
     const loopPend = loopAll.filter((e) => !e.done);
-    const loopDoneN = loopAll.length - loopPend.length;
-    const loopRowToday = (e) => cardHTML(e.item, {
-      check: true, done: false, date: d, hot: true, notesList: true,
-      chips: [{ text: '循环 · ' + Core.loopLabel(e.item), cls: 'm-loop' }, { text: '今天要做', cls: 'warn' }]
+    const loopDone = loopAll.filter((e) => e.done);
+    const loopRow = (e, compact) => cardHTML(e.item, {
+      check: true, done: !!compact, date: d, hot: !compact,
+      chips: compact
+        ? [{ text: '循环 · 已完成', cls: 'ok' }]
+        : [{ text: '循环 · ' + Core.loopLabel(e.item), cls: 'm-loop' }, { text: '今天要做', cls: 'warn' }],
+      compact: !!compact, minimal: !!compact
     });
-    const loopHtml = loopAll.length
-      ? section('今日循环任务 · ' + loopPend.length + ' 条待做',
-          (loopPend.map(loopRowToday).join('') ||
-            '<div class="empty-line"><span>今天的循环任务都做完了 ✓</span></div>') +
-          (loopDoneN ? '<p class="hint tight">已打勾 ' + loopDoneN + ' 条 · 已沉到「公司」页底部的循环任务里（本周不再提醒）</p>' : ''),
-          '', 'acc-indigo')
-      : '';
+    const loopBody = loopAll.length
+      ? loopPend.map((e) => loopRow(e, false)).join('') +
+        (loopDone.length ? doneGrid(loopDone.map((e) => loopRow(e, true))) : '')
+      : emptyLine('今天没有循环任务。', 'loop', '去循环页');
 
-    const planCls = plans.some((e) => e.st.urgent) ? 'acc-red' : 'acc-amber';
-    return loopHtml + section('今日效率', '<div class="progress">' +
-      '<div class="progress-head"><span>' + Core.fmtCN(d) + '</span>' +
-      '<span class="stat">' + (te.total ? te.done + '/' + te.total + ' · ' + pct + '%' : '今日无安排') +
-      (te.streak ? ' · 🔥 连续 ' + te.streak + ' 天' : '') + '</span></div>' +
-      (te.total ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') +
-      '<div class="summary">' + statPill('循环今日', loopAll.length, 's-indigo') +
-      statPill('公司今日', te.work.length, 's-blue') +
-      statPill('计划进行中', plans.length, 's-amber') +
-      statPill('自律今日', te.habits.length, 's-green') + '</div></div>') +
-      todayTimersHTML() +
-      section(countIn('公司 · 今日到期', te.work.length),
-        workRowsHtml || emptyLine('今天没有到期的公司条目。', 'work', '去添加'),
-        '<p class="hint tight">顺序跟「公司」页一致：想调先后，去公司页整条拖一下，这里立刻跟着变。</p>', 'acc-blue') +
-      section(countIn('计划 · 进行中', plans.length),
-        planHtml || emptyLine('还没有进行中的计划方向。', 'plan', '去写一条'), '', planCls) +
-      section(countIn('自律 · 今日要勾', te.habits.length),
-        habitHtml || emptyLine('今天没有需要打勾的习惯。', 'disc', '去添加'), '', 'acc-green');
+    const habitAll = itemOfKind('habit').map((item) => {
+      const st = Core.habitOn(item, d, checkins());
+      if (!st) return null;
+      const missed = item.freq === 'daily' && Core.dailyScheduledOn(item, Core.shiftDate(d, -1)) &&
+        !Core.checkedOn(item.id, checkins(), Core.shiftDate(d, -1));
+      return { item, st, missed };
+    }).filter(Boolean);
+    const habitDone = habitAll.filter((e) => e.st.done);
+    const habitPend = habitAll.filter((e) => !e.st.done);
+    const habitRow = (e, compact) => cardHTML(e.item, {
+      check: true, done: !!compact, date: d,
+      chips: compact
+        ? [{ text: '打卡 · 已完成', cls: 'ok' }]
+        : [{ text: '打卡 · ' + (e.item.freq === 'weekly' ? '每周' : '每日'), cls: e.item.freq === 'weekly' ? 'm-plan' : 'm-life' }]
+          .concat(e.missed ? [{ text: '昨日未打卡', cls: 'warn' }] : []),
+      softGreen: !compact && e.missed,
+      compact: !!compact, minimal: !!compact
+    });
+    const habitBody = habitAll.length
+      ? habitPend.map((e) => habitRow(e, false)).join('') +
+        (habitDone.length ? doneGrid(habitDone.map((e) => habitRow(e, true))) : '')
+      : emptyLine('今天没有打卡项目。', 'disc', '去打卡页');
+
+    const plans = nearPlanItems();
+    const planRow = (e, compact) => {
+      const t = e.item;
+      const chips = compact
+        ? [{ text: '项目 · 已完成', cls: 'ok' }]
+        : [{ text: '项目', cls: 'm-plan' }]
+          .concat((t.rangeStart || t.rangeEnd)
+            ? [{ text: (t.rangeStart || '?') + ' → ' + (t.rangeEnd || '持续'), cls: 'dim' }]
+            : [])
+          .concat(e.st.overdue
+            ? [{ text: '已拖延 ' + e.st.overdueDays + ' 天未完成', cls: 'over' }]
+            : [{ text: '剩 ' + Math.max(0, Core.dayDiff(d, t.rangeEnd)) + ' 天', cls: 'warn' }]);
+      return cardHTML(t, {
+        check: true, checkAction: 'plan-done', done: !!compact, date: d,
+        chips, notesList: !compact, hot: !compact && (e.st.overdue || e.st.urgent),
+        compact: !!compact, minimal: !!compact
+      });
+    };
+    const planBody = plans.length
+      ? plans.map((e) => planRow(e, false)).join('')
+      : emptyLine('近七天没有项目到期。', 'plan', '去项目页');
+
+    const calItems = calendarNearItems();
+    const calBody = calItems.length
+      ? '<div class="today-cal-list">' + calItems.map((n) =>
+          '<button class="today-cal-row" type="button" data-action="calendar-edit" data-id="' + n.id + '">' +
+            '<span class="today-cal-date">' + esc(Core.fmtCN(n.date)) + '</span>' +
+            '<span class="today-cal-text">' + esc(n.text || '') + '</span>' +
+          '</button>').join('') + '</div>'
+      : emptyLine('近七天日历里没有记录。', 'calendar', '去日历');
+
+    return todayTimersHTML() +
+      section('今日循环 · ' + loopPend.length + ' 条待做', loopBody, '', 'acc-indigo') +
+      section('今日打卡 · ' + habitPend.length + ' 条待做', habitBody, '', 'acc-green') +
+      section('近七天项目 · ' + plans.length + ' 条提醒', planBody,
+        '<p class="hint tight">已逾期项目固定排在最顶部；结束日在未来 7 天内的项目会出现在这里。</p>',
+        plans.some((e) => e.st.overdue) ? 'acc-red' : 'acc-amber') +
+      section('近七周日历 · ' + calItems.length + ' 条记录', calBody,
+        '<p class="hint tight">只收今天起 7 天内的日历记录；点一条可直接修改。</p>', 'acc-blue');
   }
 
   /* ---------- 公司页 ---------- */
@@ -2924,7 +3473,6 @@
       '<div class="plan-board work-board" id="work-board">' + board + '</div></section>';
     if (b.done.length) html += doneSection('work', b.done.map((x) => workDoneRow(x, d)));
     if (!total && !b.done.length) html += emptyBox('还没有公司条目。点右上「＋新建」添加第一条。');
-    html += renderLoopSection();
     return html;
   }
 
@@ -2937,7 +3485,7 @@
       emptyBox('还没有进行中的方向：在下方写一条，会自动出现在这里。');
 
     let html = '<section class="card plan-board-card' + ((urg || over) ? ' has-urgent' : '') + '">' +
-      '<h3>优先级排序 · 整条可拖动' +
+      '<h3>项目优先级排序 · 整条可拖动' +
       (over ? ' <span class="urgent-note">' + over + ' 条已拖延</span>' : '') +
       (urg ? ' <span class="urgent-note">' + urg + ' 条紧急</span>' : '') +
       ' <span class="cnt">' + g.active.length + ' 条</span></h3>' +
@@ -2946,12 +3494,12 @@
       '硬规则挡住你拖动时会弹提示说明原因。想收起已拖延那条：打勾完成，或改结束日。</p>' +
       '<div class="plan-board" id="plan-board">' + cards + '</div></section>';
 
-    html += '<section class="card plan-new-card"><h3>写计划方向</h3>' +
-      '<div class="field"><input id="p-title" type="text" maxlength="120" placeholder="大的计划方向，如：2026 Q4 换工作" /></div>' +
+    html += '<section class="card plan-new-card"><h3>写项目方向</h3>' +
+      '<div class="field"><input id="p-title" type="text" maxlength="120" placeholder="大的项目方向，如：2026 Q4 换工作" /></div>' +
       '<div class="field-row">' +
       '<label class="field"><span>开始</span><input id="p-start" type="date" /></label>' +
       '<label class="field"><span>结束（最后 10 天自动置顶“紧急”）</span><input id="p-end" type="date" /></label></div>' +
-      '<div class="actions-row"><button class="btn btn-primary" id="btn-plan-add" type="button">＋ 添加方向</button>' +
+      '<div class="actions-row"><button class="btn btn-primary" id="btn-plan-add" type="button">＋ 添加项目</button>' +
       '<span class="hint">目前 ' + g.active.length + ' 条进行中</span></div></section>';
 
     if (g.done.length) html += doneSection('plan', g.done.map((e) => ({
@@ -2967,10 +3515,10 @@
     const daily = habitCards(itemOfKind('habit').filter((t) => t.freq === 'daily'), d, c);
     const weekly = habitCards(itemOfKind('habit').filter((t) => t.freq === 'weekly'), d, c);
     const wkStart = Core.weekKey(d);
-    return section('日打勾', '<p class="hint">每天都要勾；昨天漏勾的会自动顺延到今天并标注「昨日未打勾」。</p>' +
-      (daily || emptyBox('还没有每日习惯。点「＋新建」，类型选 自律、频率选 每日。')), '', 'acc-green') +
-      section('周打勾 · 本周自 ' + wkStart, '<p class="hint">自然周（周一起）内勾一次即完成，下周一自动重置。</p>' +
-        (weekly || emptyBox('还没有每周习惯。点「＋新建」，类型选 自律、频率选 每周。')), '', 'acc-blue');
+    return section('每日打卡', '<p class="hint">每天都要勾；昨天漏勾的会自动顺延到今天并标注「昨日未打勾」。</p>' +
+      (daily || emptyBox('还没有每日打卡。点「＋新建」，类型选 打卡、频率选 每日。')), '', 'acc-green') +
+      section('每周打卡 · 本周自 ' + wkStart, '<p class="hint">自然周（周一起）内勾一次即完成，下周一自动重置。</p>' +
+        (weekly || emptyBox('还没有每周打卡。点「＋新建」，类型选 打卡、频率选 每周。')), '', 'acc-blue');
   }
 
   function renderEff() {
@@ -3017,7 +3565,7 @@
       '<div class="actions-row"><button class="btn btn-primary" id="set-alarm-save" type="button">保存</button>' +
       '<span class="hint">音频文件名（如 morning.mp3）可在 DEPLOY.md 第 3 步配置</span></div></section>' +
       '<section class="card"><h3>清理已完成</h3>' +
-      '<p class="hint">已完成区默认收成一行，点标题展开，不会自动删任何东西；展开后默认只露最近 ' + DONE_RECENT_DAYS + ' 天完成的。下面只在你手动点时，才删掉完成超过 ' + PURGE_KEEP_DAYS + ' 天的公司任务与计划方向，打勾历史（连续天数、自律记录）一律保留。</p>' +
+      '<p class="hint">已完成区默认收成一行，点标题展开，不会自动删任何东西；展开后默认只露最近 ' + DONE_RECENT_DAYS + ' 天完成的。下面只在你手动点时，才删掉完成超过 ' + PURGE_KEEP_DAYS + ' 天的公司任务与项目方向，打勾历史（连续天数、打卡记录）一律保留。</p>' +
       '<div class="actions-row"><button class="btn" id="set-purge-done" type="button"' + (purgeIds().length ? '' : ' disabled') + '>清理完成超过 ' + PURGE_KEEP_DAYS + ' 天的（' + purgeIds().length + ' 条）</button></div></section>' +
       '<section class="card"><h3>数据恢复 · 本机历史快照</h3>' +
       '<p class="hint">每次被云端新数据覆盖之前，本机都会把上一版存一份（每个文件最多 ' + HIST_MAX + ' 份）。万一某次同步把内容变少或误删了，点「恢复」就能把那一版整份推回云端，三端一起回到那个版本。</p>' +
@@ -3075,8 +3623,39 @@
   /* ---------- Tab ---------- */
   function tabBtn(id, label, badge, extra) {
     const b = badge > 99 ? '99+' : badge;   // 习惯清单会长，角标太宽会把 8 个 tab 挤歪
-    return '<button class="tab' + (current === id ? ' active' : '') + '" data-tab="' + id + '" type="button">' +
-      label + (badge ? '<i>' + b + '</i>' : '') + (extra || '') + '</button>';
+    return '<button class="tab' + (current === id ? ' active' : '') + (extra || '') +
+      '" data-tab="' + id + '" type="button">' +
+      label + (badge ? '<i>' + b + '</i>' : '') + '</button>';
+  }
+  const NAV_GROUPS = [
+    { id: 'creative', label: '创意层', tabs: [['idea', '点子'], ['fun', '娱乐']] },
+    { id: 'planning', label: '计划层', tabs: [['month', '排期'], ['plan', '项目'], ['calendar', '日历'], ['loop', '循环']] },
+    { id: 'action', label: '行动层', tabs: [['agenda', '日程'], ['disc', '打卡']] }
+  ];
+  const LEGACY_TABS = [
+    ['today', '今日'], ['work', '公司'], ['plan', '项目'], ['disc', '打卡'],
+    ['keep', '习惯'], ['month', '排期'], ['memo', '琐事'], ['idea', '点子'],
+    ['eff', '效率'], ['settings', '设置']
+  ];
+  function navGroupHTML(group, badges) {
+    const active = group.tabs.some((t) => t[0] === current);
+    const open = navGroupOpen === group.id;
+    return '<div class="nav-group' + (active ? ' is-active' : '') + (open ? ' is-open' : '') + '" data-nav-wrap="' + group.id + '">' +
+      '<button class="nav-group-main" type="button" data-nav-group="' + group.id + '">' +
+        group.label + '<span class="nav-caret">▾</span>' +
+      '</button>' +
+      '<div class="nav-subtabs">' +
+        group.tabs.map((t) => tabBtn(t[0], t[1], badges[t[0]] || 0, ' nav-subtab')).join('') +
+      '</div></div>';
+  }
+  function navHTML(badges) {
+    const more = '<div class="nav-more' + (navMoreOpen ? ' is-open' : '') + '">' +
+      '<button class="nav-more-btn" type="button" data-nav-more="1">更多<span class="nav-caret">▾</span></button>' +
+      '<div class="nav-more-menu' + (navMoreOpen ? '' : ' hidden') + '" role="menu">' +
+        LEGACY_TABS.map((t) => tabBtn(t[0], t[1], badges[t[0]] || 0, ' nav-legacy-tab')).join('') +
+      '</div></div>';
+    return NAV_GROUPS.map((g) => navGroupHTML(g, badges)).join('') +
+      tabBtn('today', '今日', badges.today || 0, ' nav-today') + more;
   }
   function render() {
     if (sortActive > 0) { pendingRender = true; return; }   // 拖动中重建 DOM 会把手上那张卡片变成孤儿
@@ -3119,25 +3698,30 @@
       }
       if (monthState.dirty) flushMonth();
     }
+    if (current === 'agenda') {
+      const ae = document.activeElement;
+      const key = ae && ae.dataset ? String(ae.dataset.docKey || '') : '';
+      if (key.indexOf('day:') === 0) {
+        flushDayPaper(key.slice(4));
+        $('#subline').textContent = statusText();
+        return;
+      }
+      calendarNearDates(7).forEach(flushDayPaper);
+    }
     $('#subline').textContent = statusText();
-    const d = today();
-    const te = Core.todayEntries(items(), checkins(), d);
-    const todayBadge = te.total - te.done;
-    const labels = [
-      ['today', '今日', todayBadge || 0],
-      ['work', '公司', workToday()],
-      ['plan', '计划', activePlans().length],
-      ['disc', '自律', habitsAction()],
-      ['keep', '习惯', itemOfKind('keep').length],
-      ['month', '排期', 0],
-      ['memo', '琐事', 0],
-      ['idea', '创意', 0],
-      ['eff', '效率', 0],
-      ['settings', '设置', 0]
-    ];
-    $('#tabs').innerHTML = labels.map((l) => tabBtn(l[0], l[1], l[2], '')).join('');
+    $('#tabs').innerHTML = navHTML({
+      today: todayPendingCount(),
+      work: workToday(),
+      plan: activePlans().length,
+      disc: habitPendingCount(),
+      keep: itemOfKind('keep').length,
+      loop: loopPendingCount(),
+      calendar: calendarNearCount()
+    });
     $('#btn-new').textContent = '＋ 新建';
-    $('#btn-new').classList.toggle('hidden', !!MEMOS[current] || current === 'month'); // 备忘录/排期就地写
+    $('#btn-new').classList.toggle('hidden',
+      !!MEMOS[current] || current === 'month' || current === 'calendar' ||
+      current === 'loop' || current === 'agenda' || current === 'today');
     const view = $('#view');
     if (current === 'today') view.innerHTML = renderToday();
     else if (current === 'work') view.innerHTML = renderWork();
@@ -3145,6 +3729,9 @@
     else if (current === 'disc') view.innerHTML = renderDisc();
     else if (current === 'keep') view.innerHTML = renderKeep();
     else if (current === 'month') view.innerHTML = renderMonth();
+    else if (current === 'calendar') view.innerHTML = renderCalendar();
+    else if (current === 'loop') view.innerHTML = renderLoopPage();
+    else if (current === 'agenda') view.innerHTML = renderAgenda();
     else if (MEMOS[current]) view.innerHTML = renderMemo(current);
     else if (current === 'eff') view.innerHTML = renderEff();
     else view.innerHTML = renderSettings();
@@ -3630,7 +4217,7 @@
 
   /* ---------- 倒计时板的操作（琐事 / 创意页与今日页共用一套） ---------- */
   /* ＋进展：在那一行下面长出 ↳ 行，写回它所属的备忘录 */
-  function beginSubAdd(item, tab) {
+  function beginSubAdd(item, source) {
     if (!item || item.querySelector('.timer-sub-add-form')) return;
     const line = Number(item.getAttribute('data-line'));
     const form = document.createElement('form');
@@ -3646,8 +4233,8 @@
       settled = true;
       const v = inp.value.replace(/\s+/g, ' ').trim();
       if (!v) { form.remove(); return; }
-      applyMemoText(tab, Core.addSubLine(memoTextNow(tab), line, v, today()));
-      refreshAfterTimerEdit(tab);
+      source.apply(Core.addSubLine(source.text(), line, v, today()));
+      source.refresh();
       toast('进展已记下 · 已同步');
     };
     form.addEventListener('submit', (e) => { e.preventDefault(); commit(); });
@@ -3657,7 +4244,7 @@
     inp.addEventListener('blur', () => setTimeout(commit, 120));
   }
   /* 点进展的文字 → 就地改（回车 / 失焦提交，Esc 取消） */
-  function beginSubEdit(row, tab) {
+  function beginSubEdit(row, source) {
     if (!row || row.classList.contains('is-editing')) return;
     const span = row.querySelector('.sub-text');
     if (!span) return;
@@ -3676,9 +4263,9 @@
       if (settled) return;
       settled = true;
       const v = inp.value.replace(/\s+/g, ' ').trim();
-      if (!save || v === before) { refreshAfterTimerEdit(tab); return; }
-      applyMemoText(tab, Core.setSubLineText(memoTextNow(tab), line, v));
-      refreshAfterTimerEdit(tab);
+      if (!save || v === before) { source.refresh(); return; }
+      source.apply(Core.setSubLineText(source.text(), line, v));
+      source.refresh();
       toast('这条进展改好了');
     };
     inp.addEventListener('keydown', (e) => {
@@ -3694,40 +4281,40 @@
     el.addEventListener('click', (e) => {
       const item = itemOf(e.target);
       if (!item) return;
-      const tab = item.getAttribute('data-src-tab') || fallbackTab;
-      if (!MEMOS[tab]) return;
+      const source = timerSourceFromRow(item, fallbackTab);
+      if (!source) return;
       const line = Number(item.getAttribute('data-line'));
       const subDel = e.target.closest('[data-action="sub-del"]');
       if (subDel) {
-        applyMemoText(tab, Core.deleteSubLine(memoTextNow(tab), Number(subDel.getAttribute('data-sub-line'))));
-        refreshAfterTimerEdit(tab);
+        source.apply(Core.deleteSubLine(source.text(), Number(subDel.getAttribute('data-sub-line'))));
+        source.refresh();
         toast('已删掉这条进展');
         return;
       }
-      if (e.target.closest('[data-action="sub-add"]')) { beginSubAdd(item, tab); return; }
+      if (e.target.closest('[data-action="sub-add"]')) { beginSubAdd(item, source); return; }
       const sub = e.target.closest('[data-action="sub-edit"]');
-      if (sub) { beginSubEdit(sub, tab); return; }
+      if (sub) { beginSubEdit(sub, source); return; }
       if (e.target.closest('[data-action="timer-del"]')) {
-        applyMemoText(tab, Core.clearLineTimer(memoTextNow(tab), line));
-        refreshAfterTimerEdit(tab);
+        source.apply(Core.clearLineTimer(source.text(), line));
+        source.refresh();
         toast('已去掉这条倒计时（正文那句话留着）');
         return;
       }
-      if (e.target.closest('[data-action="timer-edit"]')) beginTimerEdit(item, tab);
+      if (e.target.closest('[data-action="timer-edit"]')) beginTimerEdit(item, fallbackTab);
     });
     el.addEventListener('change', (e) => {
       const item = itemOf(e.target);
       if (!item) return;
-      const tab = item.getAttribute('data-src-tab') || fallbackTab;
-      if (!MEMOS[tab]) return;
+      const source = timerSourceFromRow(item, fallbackTab);
+      if (!source) return;
       const cb = e.target.closest('[data-action="timer-toggle"]');
-      if (cb) { toggleTimerDone(item, tab, cb.checked); return; }
+      if (cb) { toggleTimerDone(item, fallbackTab, cb.checked); return; }
       const inp = e.target.closest('[data-action="timer-date"]');
       if (!inp) return;
       const due = inp.value;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) { refreshAfterTimerEdit(tab); return toast('日期不对'); }
-      applyMemoText(tab, Core.setLineTimer(memoTextNow(tab), Number(item.getAttribute('data-line')), due));
-      refreshAfterTimerEdit(tab);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) { source.refresh(); return toast('日期不对'); }
+      source.apply(Core.setLineTimer(source.text(), Number(item.getAttribute('data-line')), due));
+      source.refresh();
       toast('已改到 ' + due + ' · ' + Core.fmtLeft(Core.dayDiff(today(), due)));
     });
   }
@@ -3739,7 +4326,7 @@
       makeSortable(el, {
         itemSelector: '.timer-item',
         ignoreSelector: SORT_IGNORE + ', .timer-sub, .timer-subs',
-        keyOf: (x) => Number(x.dataset.line) + (x.dataset.srcTab ? ':' + x.dataset.srcTab : ''),
+        keyOf: (x) => (x.dataset.srcKey || ('memo:' + (x.dataset.srcTab || current || ''))) + '|' + x.dataset.line,
         onReorder: (order) => applyTimerOrder(pair[1], order)
       });
     });
@@ -3747,18 +4334,21 @@
   function applyTimerOrder(fallbackTab, order) {
     const groups = new Map();
     (order || []).forEach((k) => {
-      const parts = String(k).split(':');
-      const tab = parts[1] || fallbackTab;
-      if (!MEMOS[tab]) return;
-      if (!groups.has(tab)) groups.set(tab, []);
-      groups.get(tab).push(Number(parts[0]));
+      const parts = String(k).split('|');
+      const sourceKey = parts[0] || ('memo:' + (fallbackTab || ''));
+      const line = Number(parts[1]);
+      if (!Number.isFinite(line) || !timerSourceFromKey(sourceKey)) return;
+      if (!groups.has(sourceKey)) groups.set(sourceKey, []);
+      groups.get(sourceKey).push(line);
     });
     let changed = false;
-    groups.forEach((lines, tab) => {
+    groups.forEach((lines, sourceKey) => {
       if (lines.length < 2) return;
-      const before = memoTextNow(tab);
+      const source = timerSourceFromKey(sourceKey);
+      if (!source) return;
+      const before = source.text();
       const after = Core.reorderLineBlocks(before, lines);
-      if (after !== before) { applyMemoText(tab, after); changed = true; }
+      if (after !== before) { source.apply(after); changed = true; }
     });
     refreshAfterTimerEdit(fallbackTab || current);
     if (changed) toast('顺序已保存');
@@ -3771,7 +4361,7 @@
     const b = $('#btn-plan-add');
     if (b) b.addEventListener('click', () => {
       const title = $('#p-title').value.trim();
-      if (!title) return toast('先写计划方向标题');
+      if (!title) return toast('先写项目标题');
       const it = Core.newItem({
         kind: 'plan',
         title,
@@ -3875,6 +4465,23 @@
         });
       }
     }
+    if (current === 'agenda') {
+      calendarNearDates(7).forEach((date) => {
+        const ed = document.getElementById(dayPaperEditorId(date));
+        if (!ed) return;
+        ed.addEventListener('input', () => dayPaperOnInput(date, ed));
+        ed.addEventListener('blur', () => {
+          flushDayPaper(date);
+          dayPaperMeta(date);
+        });
+        bindRichPaste(ed);
+        bindRichKeydown(ed);
+        bindRichUndo(ed);
+        ed.addEventListener('keyup', rememberMemoSelection);
+        ed.addEventListener('mouseup', rememberMemoSelection);
+        bindRichToolbar(document.getElementById(dayPaperToolbarId(date)), ed, () => dayPaperOnInput(date, ed));
+      });
+    }
     const autoGrow = (el) => {
       el.style.height = 'auto';
       el.style.height = Math.max(56, el.scrollHeight) + 'px';
@@ -3933,7 +4540,7 @@
       const ids = purgeIds();
       if (!ids.length) { toast('没有完成超过 ' + PURGE_KEEP_DAYS + ' 天的任务'); return; }
       const ok = await confirmDialog('清理已完成',
-        '会从云端删掉 ' + ids.length + ' 条完成超过 ' + PURGE_KEEP_DAYS + ' 天的公司任务与计划方向，这台设备和另外两端都会同步消失。打勾历史与自律记录不受影响。继续？');
+        '会从云端删掉 ' + ids.length + ' 条完成超过 ' + PURGE_KEEP_DAYS + ' 天的公司任务与项目方向，这台设备和另外两端都会同步消失。打勾历史与打卡记录不受影响。继续？');
       if (!ok) return;
       store.deleteTasks(ids);
       toast('已清理 ' + ids.length + ' 条已完成任务');
@@ -3966,12 +4573,40 @@
 
   /* ---------- 全局事件（一次绑定） ---------- */
   function onViewClick(e) {
+    const navGroup = e.target.closest('[data-nav-group]');
+    if (navGroup) {
+      const id = navGroup.dataset.navGroup;
+      navGroupOpen = navGroupOpen === id ? '' : id;
+      navMoreOpen = false;
+      document.querySelectorAll('.nav-group[data-nav-wrap]').forEach((el) => {
+        el.classList.toggle('is-open', el.getAttribute('data-nav-wrap') === navGroupOpen);
+      });
+      const more = document.querySelector('.nav-more');
+      if (more) more.classList.remove('is-open');
+      const menu = document.querySelector('.nav-more-menu');
+      if (menu) menu.classList.add('hidden');
+      return;
+    }
+    const navMore = e.target.closest('[data-nav-more]');
+    if (navMore) {
+      navMoreOpen = !navMoreOpen;
+      navGroupOpen = '';
+      document.querySelectorAll('.nav-group[data-nav-wrap]').forEach((el) => el.classList.remove('is-open'));
+      const more = document.querySelector('.nav-more');
+      if (more) more.classList.toggle('is-open', navMoreOpen);
+      const menu = document.querySelector('.nav-more-menu');
+      if (menu) menu.classList.toggle('hidden', !navMoreOpen);
+      return;
+    }
     const tabEl = e.target.closest('.tab[data-tab]');   // 只有顶部 tab 条才切页；别把内容里的 data-* 当切页指令
     if (tabEl) {
       flushMemo();
       flushMonth();
       flushAllRichDocs();
+      closeCalendarComposer();
       current = tabEl.dataset.tab;
+      navMoreOpen = false;
+      navGroupOpen = '';
       if (current !== 'month') reportNaming = false;
       render();
       return;
@@ -3981,7 +4616,10 @@
       flushMemo();
       flushMonth();
       flushAllRichDocs();
+      closeCalendarComposer();
       current = go.dataset.tabGo;
+      navMoreOpen = false;
+      navGroupOpen = '';
       reportNaming = false;
       render();
       return;
@@ -3993,6 +4631,54 @@
       const action = act.dataset.action;
       const id = act.dataset.id;
       const item = id ? byId(id) : null;
+      if (action === 'calendar-zoom') {
+        calendarZoom = Number(act.dataset.zoom) || 0;
+        render();
+        return;
+      }
+      if (action === 'calendar-add') {
+        openCalendarComposer(act.dataset.date, act, null);
+        return;
+      }
+      if (action === 'calendar-edit' && item && item.kind === CAL_NOTE_KIND) {
+        openCalendarComposer(item.date, act, item);
+        return;
+      }
+      if (action === 'calendar-del' && item && item.kind === CAL_NOTE_KIND) {
+        (async () => {
+          const ok = await confirmDialog('删除日历记录', '确定删除「' + (item.text || '') + '」？三端会一起删除。');
+          if (!ok) return;
+          store.deleteTask(item.id);
+          toast('日历记录已删除');
+        })();
+        return;
+      }
+      if (action === 'day-timer-add') {
+        const date = act.dataset.date;
+        const due = (document.querySelector('[data-day-timer-date="' + date + '"]') || {}).value;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(due || '')) { toast('先选一个提醒日期'); return; }
+        const ed = document.getElementById(dayPaperEditorId(date));
+        const text = ed ? memoEditorPlain(ed) : dayPaperTextNow(date);
+        const line = ed ? memoCaretLine(ed) : Math.max(0, text.split('\n').length - 1);
+        applyDayPaperText(date, Core.setLineTimer(text, line, due));
+        toast('已给第 ' + (line + 1) + ' 行加提醒 · ' + Core.fmtLeft(Core.dayDiff(today(), due)));
+        return;
+      }
+      if (action === 'doc-timer-add') {
+        const key = act.dataset.docKey;
+        if (!richDocSpec(key)) return;
+        const input = Array.prototype.slice.call(document.querySelectorAll('[data-doc-timer-date]'))
+          .find((el) => el.getAttribute('data-doc-timer-date') === key);
+        const due = input && input.value;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(due || '')) { toast('先选一个提醒日期'); return; }
+        const spec = richDocSpec(key);
+        const ed = document.getElementById(spec.editorId);
+        const text = ed ? memoEditorPlain(ed) : richDocTextNow(key);
+        const line = ed ? memoCaretLine(ed) : Math.max(0, text.split('\n').length - 1);
+        applyRichDocText(key, Core.setLineTimer(text, line, due));
+        toast('已给第 ' + (line + 1) + ' 行加提醒 · ' + Core.fmtLeft(Core.dayDiff(today(), due)));
+        return;
+      }
       if (action === 'done-fold') {
         const sc = act.dataset.scope;
         if (sc) { doneFoldState[sc] = !doneFoldOpen(sc); render(); }
@@ -4112,10 +4798,11 @@
 
   /* ---------- 启动 ---------- */
   Core.KINDS.forEach((k) => {
-    if (k.id === 'memo' || k.id === 'idea') return;   // 备忘录就地写，不走「新建」表单
+    /* 备忘录就地写；循环任务只在「循环」页用专用表单新建，避免公司页又冒出旧入口 */
+    if (k.id === 'memo' || k.id === 'idea' || k.id === 'fun' || k.id === 'loop') return;
     const o = document.createElement('option');
     o.value = k.id;
-    const hint = { work: '今日/明日', loop: '每周固定某几天', plan: '方向+时间范围', habit: '每日/每周', keep: '长期清单' }[k.id];
+    const hint = { work: '今日/明日', plan: '方向+时间范围', habit: '每日/每周', keep: '长期清单' }[k.id];
     o.textContent = k.label + (hint ? '（' + hint + '）' : '');
     $('#f-kind').appendChild(o);
   });
@@ -4223,7 +4910,10 @@
   $('#note-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeNote(); });
 
   store.onStatus = (st) => { lastStatus = st; $('#subline').textContent = statusText(); };
-  store.onChange = () => render();
+  store.onChange = () => {
+    render();
+    queueDayRollover();
+  };
   /* 切走 / 息屏 / 关页面之前，把备忘录里没落盘的字存下来 */
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { flushMemo(); flushMonth(); flushAllRichDocs(); }
@@ -4233,8 +4923,11 @@
   const refreshMonthIfDayChanged = () => {
     if (today() === monthDayStamp) return;
     monthDayStamp = today();
-    if (current !== 'month') return;
+    flushMemo();
     flushMonth();
+    flushAllRichDocs();
+    queueDayRollover();
+    if (!['month', 'agenda', 'today', 'calendar', 'disc', 'loop'].includes(current)) return;
     monthState.rangeEdit = null;
     render();
   };
@@ -4247,6 +4940,7 @@
   bindFlowEditor();
   render();
   store.init();
+  queueDayRollover();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }

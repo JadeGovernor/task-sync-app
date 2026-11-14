@@ -100,15 +100,17 @@ const cloudRank=await ev(`(()=>{const f=window.__mock.files()['tasks.json'];
   return f.filter(x=>x.id==='wt1'||x.id==='wt2').map(x=>x.id+':'+(x.rank||0)).join(',')})()`);
 ok('2e 新顺序已写进云端 rank', cloudRank==='wt1:2,wt2:1', cloudRank);
 
-/* --- 2f) 公司页拖完，今日页的公司区块顺序要跟着一起变（两页共用一把尺子） --- */
+/* --- 2f) 新版今日页只保留指定的四块，不再混入公司待办 --- */
 await goTab('today');await wait(700);
 const todayWorkOrder=String(await ev(`(()=>{const sec=[...document.querySelectorAll('#view section')].find(x=>{
   const h=x.querySelector('h3');return h&&h.textContent.indexOf('公司 · 今日到期')===0});
   return sec?[...sec.querySelectorAll('.task[data-id]')].map(x=>x.dataset.id).join(','):'NO_SECTION'})()`));
-ok('2f 今日页公司顺序跟公司页一致', todayWorkOrder.split(',')[0]==='wt2', todayWorkOrder);
-ok('2g 今日页公司区块出现了顺序口径提示', (await ev(`(()=>{const sec=[...document.querySelectorAll('#view section')].find(x=>{
-  const h=x.querySelector('h3');return h&&h.textContent.indexOf('公司 · 今日到期')===0});
-  return !!sec&&sec.textContent.indexOf('顺序跟「公司」页一致')>0})()`))===true);
+ok('2f 今日页不再显示公司区块', todayWorkOrder==='NO_SECTION', todayWorkOrder);
+ok('2g 今日页只剩循环/打卡/项目/日历四块', await ev(`(()=>{
+  const hs=[...document.querySelectorAll('#view > section h3')].map(x=>x.textContent);
+  return hs.length===4 && /今日循环/.test(hs[0]) && /今日打卡/.test(hs[1]) &&
+    /近七天项目/.test(hs[2]) && /近七周日历/.test(hs[3]);
+})()`));
 await goTab('work');await wait(700);
 
 /* --- 3) 跨桶拖动：明日甲 拖进 今日桶 → 到期日改成今天 --- */

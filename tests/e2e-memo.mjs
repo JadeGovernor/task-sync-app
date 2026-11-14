@@ -45,7 +45,7 @@ await send('Network.setCacheDisabled',{cacheDisabled:true});
 await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScaleFactor:2,mobile:true});
 const inj=await send('Page.addScriptToEvaluateOnNewDocument',{source:MOCK});
 await load(URL_);await wait(1800);
-const goTab=async name=>{await ev(`[...document.querySelectorAll('.tab')].find(t=>t.textContent.includes(${JSON.stringify(name)})).click()`);await wait(400)};
+const goTab=async tab=>{await ev(`document.querySelector('.tab[data-tab="${tab}"]').click()`);await wait(400)};
 const memoHtml=(text)=>String(text).split('\n').map(line=>line
   ? '<div>'+line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</div>'
   : '<div><br></div>').join('');
@@ -54,13 +54,13 @@ const setMemo=async text=>{await ev(`(()=>{const ed=document.querySelector('#mem
 const memoVal=()=>ev(`(()=>{const ed=document.querySelector('#memo-text');return ed?String(ed.innerText||'').replace(/\\n+$/,''):''})()`);
 
 // ===== 1) 琐事：敲完字立刻切页 =====
-await goTab('琐事');
+await goTab('memo');
 ok('1a 琐事页有输入框', await ev(`!!document.querySelector('#memo-text')`));
 await setMemo('买牛奶 + 交房租');
 await wait(120);
-await goTab('习惯');
+await goTab('keep');
 await wait(1600);
-await goTab('琐事');
+await goTab('memo');
 const memoBack=await memoVal();
 ok('1b 切页回来字还在', memoBack==='买牛奶 + 交房租', memoBack);
 ok('1c 已进远端', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes('买牛奶 + 交房租')`));
@@ -69,7 +69,7 @@ await wait(6000);
 ok('1e 心跳后仍在（没被冲掉）', (await memoVal())==='买牛奶 + 交房租');
 
 // ===== 2) 习惯：加一条 -> 删掉 -> 反复心跳不复活 =====
-await goTab('习惯');
+await goTab('keep');
 await ev(`(()=>{document.querySelector('#k-title').value='每天读书';document.querySelector('#keep-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));return 1;})()`);
 await wait(1600);
 const hId=await ev(`(window.__mock.files()['tasks.json'].find(t=>t.title==='每天读书')||{}).id`);
@@ -87,23 +87,27 @@ await wait(7000);
 ok('2d 七秒后没复活', await ev(`!window.__mock.files()['tasks.json'].some(t=>t.id===${JSON.stringify(hId)})&&!JSON.parse(localStorage.getItem('ts_state_v2')).tasks.some(t=>t.id===${JSON.stringify(hId)})`));
 ok('2e 琐事仍在', await ev(`window.__mock.files()['tasks.json'].some(t=>t.memo==='买牛奶 + 交房租')`));
 
-// ===== 2.5) 创意备忘录：和琐事同款、互不干扰 =====
-await goTab('创意');
-ok('2f 创意页有输入框', await ev(`!!document.querySelector('#memo-text')`));
-ok('2g 创意初始为空', (await memoVal())==='');
+// ===== 2.5) 点子备忘录：和琐事同款、互不干扰 =====
+await goTab('idea');
+ok('2f 点子页有输入框', await ev(`!!document.querySelector('#memo-text')`));
+ok('2g 点子初始为空', (await memoVal())==='');
 await setMemo('做一个自动播演讲的闹钟');
 await wait(1400);
-ok('2h 创意已进远端', await ev(`window.__mock.files()['tasks.json'].some(t=>t.kind==='idea'&&t.memo==='做一个自动播演讲的闹钟')`));
-await goTab('琐事');
+ok('2h 点子已进远端', await ev(`window.__mock.files()['tasks.json'].some(t=>t.kind==='idea'&&t.memo==='做一个自动播演讲的闹钟')`));
+await goTab('memo');
 const memoStill=await memoVal();
 ok('2i 切回琐事内容没被串改', memoStill==='买牛奶 + 交房租', memoStill);
-await goTab('创意');
-ok('2j 创意内容还在', (await memoVal())==='做一个自动播演讲的闹钟');
+await goTab('idea');
+ok('2j 点子内容还在', (await memoVal())==='做一个自动播演讲的闹钟');
 ok('2k 两条备忘录各自一条', await ev(`(()=>{const f=window.__mock.files()['tasks.json'];return f.filter(t=>t.kind==='memo').length===1&&f.filter(t=>t.kind==='idea').length===1})()`));
 ok('2l 灵感不混进今日/公司/计划', await ev(`(()=>{document.querySelector('[data-tab="today"]').click();return 1})()`)!==undefined);
 await wait(400);
 ok('2m 今日页没出现备忘录条目', await ev(`!document.querySelector('#view').innerText.includes('做一个自动播演讲的闹钟')&&!document.querySelector('#view').innerText.includes('买牛奶')`));
-ok('2n 创意 tab 在琐事后面', await ev(`(()=>{const t=[...document.querySelectorAll('.tab')].map(x=>x.textContent.replace(/\\d+$/,'').trim());return t.indexOf('创意')===t.indexOf('琐事')+1})()`));
+ok('2n 点子在创意层、琐事仍在旧入口', await ev(`(()=>{
+  const creative=[...document.querySelectorAll('.nav-group[data-nav-wrap="creative"] .tab[data-tab]')].map(x=>x.dataset.tab);
+  const legacy=[...document.querySelectorAll('.nav-more-menu .tab[data-tab]')].map(x=>x.dataset.tab);
+  return creative.includes('idea')&&legacy.includes('memo');
+})()`));
 
 // ===== 3) 旧版遗留队列（无 _id）进来即清空、不回灌 =====
 await ev(`(()=>{const stale={id:'ghost1',kind:'keep',title:'早该删掉的习惯',created:'2026-01-01'};

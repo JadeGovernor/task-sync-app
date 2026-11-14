@@ -54,6 +54,7 @@ const goTab=async(k)=>{for(let i=0;i<8;i++){await ev(`(()=>{const t=document.que
   if(await ev(`!!document.querySelector('.tab[data-tab="${k}"].active')`)){await wait(300);return true}}return false};
 
 const selectAllEditor=`(()=>{const ed=document.querySelector('#memo-text');
+  ed.focus();
   const range=document.createRange();range.selectNodeContents(ed);
   const sel=getSelection();sel.removeAllRanges();sel.addRange(range);
   document.dispatchEvent(new Event('selectionchange'));return 1})()`;
@@ -69,7 +70,7 @@ await goTab('memo');
 await ev(`(()=>{const ed=document.querySelector('#memo-text');
   ed.innerHTML='<p>同一段文字反复切换</p>';ed.dispatchEvent(new Event('input',{bubbles:true}));return 1})()`);
 await wait(900);
-await ev(selectAllEditor);await wait(250);
+await ev(selectAllEditor);await wait(1200);
 
 const bubble=await ev(`(()=>{const b=document.querySelector('#fmt-bubble');const r=b.getBoundingClientRect();
   const tr=document.querySelector('#memo-text p').getBoundingClientRect();
@@ -130,10 +131,11 @@ ok('3f 反复切换时选区没有丢', s.selected===true, s);
 await ev(`(()=>{const ed=document.querySelector('#memo-text');
   ed.innerHTML='<p><span style="color:#dc2626;background-color:#fef08a">彩色高亮文字</span></p>';
   ed.dispatchEvent(new Event('input',{bubbles:true}));
+  ed.focus();
   const range=document.createRange();range.selectNodeContents(ed.firstElementChild);
   const sel=getSelection();sel.removeAllRanges();sel.addRange(range);
   document.dispatchEvent(new Event('selectionchange'));return 1})()`);
-await wait(250);
+await wait(1200);
 await clickPreset('large');
 let colorful=await ev(`(()=>{const sp=document.querySelector('#memo-text h2 span');return sp?{style:sp.getAttribute('style'),weight:getComputedStyle(sp).fontWeight}:null})()`);
 ok('4a 大不改掉原有文字颜色', !!colorful&&/color:\s*#?dc2626/i.test(colorful.style), colorful);
@@ -145,6 +147,7 @@ ok('4d 小把这段恢复为不加粗', !!colorful&&(colorful.weight==='400'||co
 
 await ev(`(()=>{const ed=document.querySelector('#memo-text');
   ed.innerHTML='<p>最后切到大标题</p>';ed.dispatchEvent(new Event('input',{bubbles:true}));
+  ed.focus();
   const range=document.createRange();range.selectNodeContents(ed.firstElementChild);
   const sel=getSelection();sel.removeAllRanges();sel.addRange(range);
   document.dispatchEvent(new Event('selectionchange'));return 1})()`);
@@ -159,20 +162,22 @@ ok('5c 刷新后格式还在', await ev(`document.querySelector('#memo-text h2')
 await goTab('month');await wait(400);
 await ev(`(()=>{const ed=document.querySelector('#monthnote-editor');
   ed.innerHTML='<p>周报底稿也能快捷排版</p>';ed.dispatchEvent(new Event('input',{bubbles:true}));
+  ed.focus();
   const range=document.createRange();range.selectNodeContents(ed.firstElementChild);
   const sel=getSelection();sel.removeAllRanges();sel.addRange(range);
   document.dispatchEvent(new Event('selectionchange'));return 1})()`);
-await wait(250);
+await wait(1200);
 ok('6a 排期底稿也出现快捷按钮', await ev(`!document.querySelector('#fmt-bubble').classList.contains('hidden')`));
 await clickPreset('medium');
 ok('6b 排期底稿也能设为小标题', await ev(`!!document.querySelector('#monthnote-editor h3')`));
 
 await ev(`(()=>{const ed=document.querySelector('#monthnote-editor');
   ed.innerHTML='第一行没有段落包裹<div>第二行正常显示</div>';ed.dispatchEvent(new Event('input',{bubbles:true}));
+  ed.focus();
   const range=document.createRange();range.selectNodeContents(ed.firstChild);
   const sel=getSelection();sel.removeAllRanges();sel.addRange(range);
   document.dispatchEvent(new Event('selectionchange'));return 1})()`);
-await wait(250);
+await wait(1200);
 await clickPreset('large');
 const firstLine=await ev(`(()=>{const ed=document.querySelector('#monthnote-editor');
   const h2=ed.querySelector('h2');return {tag:h2&&h2.tagName,text:h2&&h2.textContent,html:ed.innerHTML}})()`);
@@ -184,10 +189,11 @@ await ev(`(()=>{const i=document.querySelector('#report-name');i.value='格式�
 await wait(800);
 await ev(`(()=>{const ed=document.querySelector('#report-editor');
   ed.innerHTML='<p>周报正文也能快捷排版</p>';ed.dispatchEvent(new Event('input',{bubbles:true}));
+  ed.focus();
   const range=document.createRange();range.selectNodeContents(ed.firstElementChild);
   const sel=getSelection();sel.removeAllRanges();sel.addRange(range);
   document.dispatchEvent(new Event('selectionchange'));return 1})()`);
-await wait(250);
+await wait(1200);
 ok('6d 周报正文也出现快捷按钮', await ev(`!document.querySelector('#fmt-bubble').classList.contains('hidden')`));
 await clickPreset('large');
 ok('6e 周报正文也能设为标题', await ev(`!!document.querySelector('#report-editor h2')`));

@@ -24,19 +24,20 @@
   };
   const uid = (p) => (p || 't') + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 
-  /* 六种大条目：公司任务 / 计划方向 / 自律习惯 / 习惯清单 / 琐事备忘录 / 创意备忘录 */
+  /* 大条目：公司任务 / 循环 / 项目 / 打卡 / 习惯清单 / 琐事 / 点子 / 娱乐 */
   const KINDS = [
     { id: 'work', label: '公司' },
     { id: 'loop', label: '循环任务' },
-    { id: 'plan', label: '计划' },
-    { id: 'habit', label: '自律' },
+    { id: 'plan', label: '项目' },
+    { id: 'habit', label: '打卡' },
     { id: 'keep', label: '习惯' },
     { id: 'memo', label: '琐事' },
-    { id: 'idea', label: '创意' }
+    { id: 'idea', label: '点子' },
+    { id: 'fun', label: '娱乐' }
   ];
   const FREQS = [
-    { id: 'daily', label: '每日习惯（每天都要勾）' },
-    { id: 'weekly', label: '每周习惯（本周勾一次）' }
+    { id: 'daily', label: '每日打卡（每天都要勾）' },
+    { id: 'weekly', label: '每周打卡（本周勾一次）' }
   ];
   /* 循环任务用：0=周日 … 6=周六，与 Date.getDay() 一致 */
   const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -75,8 +76,21 @@
       base.memo = '';           // 一整张备忘录的正文，随时改
       base.memoHtml = '';       // 富文本版本；memo 继续保留纯文本给倒计时识别
     } else if (partial && partial.kind === 'idea') {
-      base.title = '创意';
+      base.title = '点子';
       base.memo = '';           // 和琐事同款：整张备忘录只有一条，正文放在 memo 字段
+      base.memoHtml = '';
+    } else if (partial && partial.kind === 'fun') {
+      base.title = '娱乐清单';
+      base.memo = '';
+      base.memoHtml = '';
+    } else if (partial && partial.kind === 'calendar_note') {
+      base.title = '';
+      base.date = null;
+      base.text = '';
+    } else if (partial && partial.kind === 'daypaper') {
+      base.title = '日程';
+      base.date = null;
+      base.memo = '';
       base.memoHtml = '';
     } else if (partial && partial.kind === 'monthnote') {
       base.title = '计划底稿';

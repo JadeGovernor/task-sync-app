@@ -74,8 +74,8 @@ ok('1e 明天那条不在今日桶', (await ev(`document.querySelector('#work-bo
 
 /* --- 2) 今日页的计划能打勾 --- */
 await goTab('today');
-ok('2a 今日页有计划区', (await ev(`document.querySelector('#view').textContent.includes('计划 · 进行中')`))===true);
-ok('2b 今日页计划行有勾选框', (await ev(`document.querySelectorAll('#view input[data-action="plan-done"]').length`))===2,
+ok('2a 今日页有近七天项目区', (await ev(`document.querySelector('#view').textContent.includes('近七天项目')`))===true);
+ok('2b 今日页只列近七天内到期的项目（1 条）', (await ev(`document.querySelectorAll('#view input[data-action="plan-done"]').length`))===1,
   await ev(`document.querySelectorAll('#view input[data-action="plan-done"]').length`));
 ok('2c 今日页计划行还是未勾状态', (await ev(`[...document.querySelectorAll('#view input[data-action="plan-done"]')].every(i=>!i.checked)`))===true);
 await ev(`document.querySelector('#view input[data-action="plan-done"][data-id="p_b"]').click()`);
@@ -94,13 +94,15 @@ await wait(500);
 ok('2g 展开后能看到刚完成的那条计划', (await ev(`document.querySelector('#view').textContent.includes('进行中的计划B')`))===true,
   await ev(`document.querySelector('#view').textContent.replace(/\s+/g,' ').slice(0,160)`));
 
-/* --- 3) 今日页勾公司条目，公司徽标要跟着掉 --- */
+/* --- 3) 公司条目不再混进今日；公司徽标仍按公司页自己的口径走 --- */
 await goTab('today');
-await ev(`document.querySelector('#view input[data-action="toggle"][data-id="w_today"]').click()`);
+ok('3a 今日页不显示公司条目', (await ev(`!document.querySelector('#view input[data-action="toggle"][data-id="w_today"]')`))===true);
+ok('3b 公司徽标仍是 2', (await ev(badge('work')))===2, await ev(badge('work')));
+await goTab('work');
+await ev(`document.querySelector('#work-board input[data-action="toggle"][data-id="w_today"]').click()`);
 await wait(1200);
-ok('3a 勾掉今天那条后，公司徽标 2 → 1', (await ev(badge('work')))===1, await ev(badge('work')));
-ok('3b 云端里那条已标记完成', (await ev(`window.__mock.files()['tasks.json'].find(x=>x.id==='w_today').done`))===true);
-ok('3c 今天已勾的条数回显正确', (await ev(`document.querySelector('#view').textContent.includes('已打勾')||document.querySelector('#view').textContent.includes('已完成')`))===true);
-ok('3d 全程无 JS 报错', errors.length===0, errors.slice(0,2));
+ok('3c 在公司页勾掉今天那条后，徽标 2 → 1', (await ev(badge('work')))===1, await ev(badge('work')));
+ok('3d 云端里那条已标记完成', (await ev(`window.__mock.files()['tasks.json'].find(x=>x.id==='w_today').done`))===true);
+ok('3e 全程无 JS 报错', errors.length===0, errors.slice(0,2));
 dump();
 process.exit(R.every(r=>r.pass)?0:1);

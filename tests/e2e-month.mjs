@@ -67,11 +67,11 @@ const goTab=async(k)=>{for(let i=0;i<8;i++){await ev(`(()=>{const t=document.que
   if(await ev(`!!document.querySelector('.tab[data-tab="${k}"].active')`)){await wait(250);return true}}return false};
 const toastText=`(()=>{const t=document.querySelector('#toast');return t&&!t.classList.contains('hidden')?t.textContent:'(无提示)'})()`;
 
-/* --- 1) tab 位置：习惯 之后、琐事 之前 --- */
+/* --- 1) 新版导航：排期归入「计划层」 --- */
 const tabOrder=await ev(`[...document.querySelectorAll('.tab[data-tab]')].map(x=>x.dataset.tab)`);
-const ik=tabOrder.indexOf('keep'), im=tabOrder.indexOf('month'), ime=tabOrder.indexOf('memo');
-ok('1a 顶部有「排期」tab', im>=0, tabOrder);
-ok('1b 位置在「习惯」之后、「琐事」之前', ik<im&&im<ime, tabOrder);
+const planningTabs=await ev(`[...document.querySelectorAll('.nav-group[data-nav-wrap="planning"] .tab[data-tab]')].map(x=>x.dataset.tab)`);
+ok('1a 计划层有「排期」tab', planningTabs.includes('month'), planningTabs);
+ok('1b 排期排在计划层第一位', planningTabs[0]==='month', planningTabs);
 ok('1c 切到本月排期', await goTab('month'));
 ok('1d 排期页隐藏「＋新建」', (await ev(`document.querySelector('#btn-new').classList.contains('hidden')`))===true);
 

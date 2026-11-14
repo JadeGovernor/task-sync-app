@@ -59,7 +59,7 @@ await send('Network.setCacheDisabled',{cacheDisabled:true});
 await send('Emulation.setDeviceMetricsOverride',{width:393,height:852,deviceScaleFactor:2,mobile:true});
 const inj=await send('Page.addScriptToEvaluateOnNewDocument',{source:MOCK});
 await load(URL_);await wait(1800);
-const goTab=async name=>{await ev(`[...document.querySelectorAll('.tab')].find(t=>t.textContent.includes(${JSON.stringify(name)})).click()`);await wait(400)};
+const goTab=async tab=>{await ev(`document.querySelector('.tab[data-tab="${tab}"]').click()`);await wait(400)};
 const dAfter=async n=>ev(`Core.shiftDate(Core.todayStr(),${n})`);
 const memoVal=()=>ev(`(()=>{const ed=document.querySelector('#memo-text');return ed?String(ed.innerText||'').replace(/\\n+$/,''):''})()`);
 const memoHtml=text=>String(text).split('\n').map(line=>line
@@ -78,7 +78,7 @@ const rows=()=>ev(`document.querySelectorAll('#memo-timers .timer-row').length`)
 const rowInfo=()=>ev(`[...document.querySelectorAll('#memo-timers .timer-row')].map(r=>({cls:r.className,left:r.querySelector('.timer-left').textContent,text:r.querySelector('.timer-text').textContent,due:r.querySelector('.timer-due').textContent}))`);
 
 // ===== 1) 琐事：光标那一行 + 选日期 → 加倒计时 =====
-await goTab('琐事');
+await goTab('memo');
 ok('1a 琐事页有日期+按钮', await ev(`!!document.querySelector('#memo-timer-date')&&!!document.querySelector('#memo-timer-add')`));
 ok('1a2 初始没有倒计时板行', (await rows())===0);
 await setMemo('买牛奶\n交房租');
@@ -120,7 +120,7 @@ ok('1m 删掉后正文里标记也没了', !(await memoVal()).includes('⏰'+dOv
 ok('1n 板上只剩一条', (await rows())===1, await rows());
 
 // ===== 2) 创意：同款能力，且和琐事互不干扰 =====
-await goTab('创意');
+await goTab('idea');
 ok('2a 创意页也有倒计时工具条', await ev(`!!document.querySelector('#memo-timer-add')`));
 const d1=await dAfter(1);
 await setMemo('做一个自动播演讲的闹钟');
@@ -134,7 +134,7 @@ ok('2d 两条备忘录各自独立', await ev(`(()=>{const f=window.__mock.files
 
 // ===== 3) 今日页倒计时提醒：只收「今天到期 + 已过期」 =====
 const d0=await dAfter(0);
-await goTab('琐事');
+await goTab('memo');
 ok('3a 日期默认就是今天（不是一周后）', (await ev(`document.querySelector('#memo-timer-date').value`))===d0);
 await setCaretLine(0,1);
 await wait(200);
@@ -142,18 +142,18 @@ await ev(`(()=>{document.querySelector('#memo-timer-date').value=${JSON.stringif
 await wait(400);
 ok('3b 今天到期那条落在光标行', (await memoVal()).includes('买牛奶 ⏰'+d0), await memoVal());
 
-await goTab('今日');
+await goTab('today');
 const todayTxt=await ev(`document.querySelector('#view').innerText`);
-ok('3c 今日页出现倒计时提醒', todayTxt.includes('倒计时提醒'), todayTxt.slice(0,120));
+ok('3c 今日页出现「今日提醒」', todayTxt.includes('今日提醒'), todayTxt.slice(0,120));
 ok('3d 今天到期的进来了、带来源标签', todayTxt.includes('买牛奶')&&todayTxt.includes('琐事'), todayTxt.slice(0,200));
 ok('3e 明天到期的不掺和进今日', !todayTxt.includes('做一个自动播演讲的闹钟'), todayTxt.slice(0,200));
 ok('3f 更远（10 天后）的也不进来', !todayTxt.includes('交房租'), todayTxt.slice(0,200));
 
 // 过期的同样要提醒
-await goTab('琐事');
+await goTab('memo');
 await setMemo('牛奶过期了 ⏰'+dOver+'\n'+(await memoVal()));
 await wait(1400);
-await goTab('今日');
+await goTab('today');
 const todayTxt2=await ev(`document.querySelector('#view').innerText`);
 ok('3g 过期的也照常提醒', todayTxt2.includes('牛奶过期了')&&todayTxt2.includes('已过期'), todayTxt2.slice(0,200));
 
@@ -169,7 +169,7 @@ const memoRemote=await ev(`(window.__mock.files()['tasks.json'].find(t=>t.kind==
 ok('3j 今日页改完落回琐事正文、标记原样保留', memoRemote==='牛奶过期了 ⏰'+dOver+'\n买菜和牛奶 ⏰'+d0+'\n交房租 ⏰'+d10, memoRemote);
 ok('3k 今日页那张卡片跟着变', (await ev(`document.querySelector('#today-timers').innerText`)).includes('买菜和牛奶'));
 
-await goTab('琐事');
+await goTab('memo');
 ok('3l 琐事页现在显示改后的字', (await memoVal()).includes('买菜和牛奶'));
 ok('3m 琐事页也能点开', (await ev(rowByText('#memo-timers','交房租')))===1);
 await ev(`(()=>{const i=document.querySelector('#memo-timers input.timer-edit');i.value='不该保存的内容';i.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));return 1})()`);
@@ -205,14 +205,14 @@ ok('3.6h 撤回后那一行原样回来', (await memoVal()).includes('牛奶过�
 ok('3.6i 撤回也同步到远端', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes('牛奶过期了')`));
 
 /* 今日页勾掉一条：连它下面的进展一起删，不用再回琐事 */
-await goTab('琐事');
+await goTab('memo');
 await ev(`(()=>{const i=[...document.querySelectorAll('#memo-timers .timer-item')].find(x=>x.querySelector('.timer-text').textContent==='买菜和牛奶');i.querySelector('[data-action="sub-add"]').click();return 1})()`);
 await wait(250);
 await ev(`(()=>{const f=document.querySelector('#memo-timers .timer-sub-add-form');f.querySelector('input').value='已经买好了';f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));return 1})()`);
 await wait(800);
 ok('3.6j 先给这条挂上一条进展', (await memoVal()).includes('↳ '+d0.slice(5)+' 已经买好了'), await memoVal());
 
-await goTab('今日');
+await goTab('today');
 const ti1=await todayRowsInfo();
 ok('3.6k 今日页两条都在、都还没勾', ti1.length===2&&ti1.every(r=>!r.checked), JSON.stringify(ti1));
 ok('3.6l 今日页直接勾掉一条', (await ev(tickCb('#today-timers','买菜和牛奶')))===1);
@@ -226,19 +226,19 @@ ok('3.6q 删除也同步到远端', !(await ev(`JSON.stringify(window.__mock.fil
 ok('3.6r 今日页也能撤回这一整块', (await clickUndo())===1);
 await wait(700);
 ok('3.6s 撤回后今日页两条又都在', (await todayRowsInfo()).length===2, JSON.stringify(await todayRowsInfo()));
-await goTab('琐事');
+await goTab('memo');
 ok('3.6t 撤回后那句和它的进展都回来了', (await memoVal()).includes('买菜和牛奶 ⏰'+d0)&&(await memoVal()).includes('↳ '+d0.slice(5)+' 已经买好了'), await memoVal());
 
 /* 收尾：删掉刚加的进展，正文恢复到 3.5 结束时的三行 */
 await ev(`(()=>{const s=document.querySelector('#memo-timers .timer-sub');s.querySelector('[data-action="sub-del"]').click();return 1})()`);
 await wait(700);
 ok('3.6u 现场恢复成三行、没有 ✅', (await memoVal()).split('\n').length===3&&!(await memoVal()).includes('✅'), await memoVal());
-await goTab('今日');
+await goTab('today');
 
 // ===== 3.7) 今日页里直接补进展 / 删倒计时 / 拖动排序（不用回琐事 / 创意） =====
 const findItem = (box,t)=>`[...document.querySelectorAll('${box} .timer-item')].find(x=>x.querySelector('.timer-text').textContent===${JSON.stringify(t)})`;
 const subInfo = (box)=>ev(`[...document.querySelectorAll('${box} .timer-sub')].map(s=>({md:s.querySelector('.sub-md').textContent,text:s.querySelector('.sub-text').textContent}))`);
-await goTab('今日');
+await goTab('today');
 ok('3.7a 今日页每行都有 ＋进展 / ✕ / 日期', await ev(`document.querySelectorAll('#today-timers [data-action="sub-add"]').length===2&&document.querySelectorAll('#today-timers [data-action="timer-del"]').length===2&&document.querySelectorAll('#today-timers .timer-date').length===2`));
 ok('3.7b 今日页整条是拖动单元', await ev(`[...document.querySelectorAll('#today-timers .timer-item')].every(x=>x.querySelector('.timer-row'))`));
 
@@ -255,11 +255,13 @@ ok('3.7e 进展紧跟在那一句话下面', subLines[parentAt+1].trim()==='↳ 
 ok('3.7f 今日页立刻显示这条进展', (await subInfo('#today-timers')).some(s=>s.text==='已经买好了'), JSON.stringify(await subInfo('#today-timers')));
 ok('3.7g 今日页补的进展已同步到远端', await ev(`JSON.stringify(window.__mock.files()['tasks.json']).includes(${JSON.stringify('↳ '+d0.slice(5)+' 已经买好了')})`));
 
-await goTab('琐事');
+await goTab('memo');
 ok('3.7h 琐事板也显示同一条进展', (await subInfo('#memo-timers')).some(s=>s.text==='已经买好了'), JSON.stringify(await subInfo('#memo-timers')));
 ok('3.7i 进展被算作那句话的一部分（没多出倒计时）', (await rows())===3, await rows());
 
-await ev(`(()=>{const s=[...document.querySelectorAll('#memo-timers .timer-sub')].find(x=>x.querySelector('.sub-text').textContent==='已经买好了');s.querySelector('.sub-text').click();return 1})()`);
+await wait(250);
+const subClick=await ev(`(()=>{const s=[...document.querySelectorAll('#memo-timers .timer-sub')].find(x=>x.querySelector('.sub-text').textContent==='已经买好了');if(!s)return 0;s.querySelector('.sub-text').click();return 1})()`);
+ok('3.7j0 琐事板上仍能找到刚补的进展', subClick===1, subClick);
 ok('3.7j 点进展的文字变成输入框', await ev(`!!document.querySelector('#memo-timers .timer-sub input.sub-edit')`));
 await ev(`(()=>{const i=document.querySelector('#memo-timers .timer-sub input.sub-edit');i.value='已经买好了，还买了鸡蛋';i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1})()`);
 await wait(600);
@@ -271,7 +273,7 @@ ok('3.7l 删掉这条进展', !(await memoNow()).includes('已经买好了')&&!(
 ok('3.7m 删完那句话本身还在', (await memoNow()).includes('买菜和牛奶 ⏰'+d0), await memoNow());
 
 /* 今日页 ✕ = 去掉倒计时标记，正文那句话保留 */
-await goTab('今日');
+await goTab('today');
 await ev(`(()=>{const i=${findItem('#today-timers','牛奶过期了')};i.querySelector('[data-action="timer-del"]').click();return 1})()`);
 await wait(600);
 const memoAfterDel=await memoNow();
@@ -279,7 +281,7 @@ ok('3.7n 今日页 ✕ 去掉倒计时，正文那句话留着', memoAfterDel.in
 ok('3.7o 今日页那张卡片跟着少一条', await ev(`document.querySelectorAll('#today-timers .timer-item').length===1`));
 
 /* 拖动排序：同一档里两条（都是今天），把下面那条拖到上面 */
-await goTab('琐事');
+await goTab('memo');
 await setMemo('甲今天 ⏰'+d0+'\n乙今天 ⏰'+d0);
 ok('3.7p 板上按正文顺序排', JSON.stringify((await rowInfo()).map(r=>r.text))===JSON.stringify(['甲今天','乙今天']), await rowInfo());
 const centers=await ev(`(()=>{
@@ -296,9 +298,9 @@ ok('3.7s 板上顺序跟着换', JSON.stringify((await rowInfo()).map(r=>r.text)
 ok('3.7t 拖动顺序也同步到远端', (await memoNow()).startsWith('乙今天 ⏰'+d0+'\n甲今天 ⏰'+d0), await memoNow());
 
 /* 今日页拖动：跨备忘录不互相搬（只在自己那张纸上换位置） */
-await goTab('创意');
+await goTab('idea');
 await setMemo('创意今天 ⏰'+d0);
-await goTab('今日');
+await goTab('today');
 const todayOrder=()=>ev(`[...document.querySelectorAll('#today-timers .timer-text')].map(x=>x.textContent)`);
 ok('3.7u 今日页把两张备忘录的提醒并在一起', JSON.stringify(await todayOrder())===JSON.stringify(['乙今天','创意今天','甲今天']), await todayOrder());
 const c2=await ev(`(()=>{
@@ -313,18 +315,18 @@ ok('3.7v 今日页拖完琐事的顺序也换了', (await memoNow()).startsWith(
 ok('3.7w 创意那张纸一个字没动', (await ev(`(window.__mock.files()['tasks.json'].find(t=>t.kind==='idea')||{}).memo`))==='创意今天 ⏰'+d0);
 
 /* 把现场恢复到 3.6 结束时的样子，后面第 4 段还要用 */
-await goTab('琐事');
+await goTab('memo');
 await setMemo('牛奶过期了 ⏰'+dOver+'\n买菜和牛奶 ⏰'+d0+'\n交房租和水电 ⏰'+d10);
-await goTab('创意');
+await goTab('idea');
 await setMemo('做一个自动播演讲的闹钟 ⏰'+d1);
-await goTab('琐事');
+await goTab('memo');
 ok('3.7x 恢复：琐事仍是 3 条、创意仍是 1 条', (await rows())===3, await rowInfo());
 
 // ===== 4) 刷新（换设备/新会话）后还在 =====
 await load(URL_);await wait(1800);
-await goTab('琐事');
+await goTab('memo');
 ok('4a 刷新后琐事的倒计时还在', (await rows())===3&&(await memoVal()).includes('⏰'+d10), await rowInfo());
-await goTab('创意');
+await goTab('idea');
 ok('4b 刷新后创意的倒计时还在', (await rows())===1&&(await rowInfo())[0].left==='明天', await rowInfo());
 await wait(4000);
 ok('4c 心跳几轮没被冲掉', (await rows())===1);

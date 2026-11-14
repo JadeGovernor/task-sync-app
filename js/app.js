@@ -868,10 +868,9 @@
     const list = calendarRecordsSorted();
     if (!list.length) return emptyBox('还没有日历记录。点任意日期即可写一条。');
     return '<div class="cal-records">' + list.map((n) => {
-      const d = Core.parseDate(n.date);
       return '<div class="cal-record-item" data-id="' + n.id + '">' +
         '<button class="cal-record-main" type="button" data-action="calendar-edit" data-id="' + n.id + '">' +
-          '<span class="cal-record-date">' + d.getMonth() + 1 + '月' + d.getDate() + '日 · ' + Core.weekdayCN(n.date) + '</span>' +
+          '<span class="cal-record-date">' + Core.fmtCN(n.date).replace(' ', ' · ') + '</span>' +
           '<span class="cal-record-text">' + esc(n.text || '') + '</span>' +
         '</button>' +
         '<button class="cal-record-del" type="button" data-action="calendar-del" data-id="' + n.id + '" title="删除这条记录">✕</button>' +

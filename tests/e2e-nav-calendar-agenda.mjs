@@ -1,4 +1,4 @@
-/* v53：分层导航、日历、日程七天纸、今日四块提醒、富文本提醒统一进今日顶部 */
+/* v54：分层导航、日历、日程七天纸、今日四块提醒、富文本提醒统一进今日顶部 */
 const CDP = 'http://127.0.0.1:9334';
 const ORIGIN = 'http://127.0.0.1:8123';
 const URL_ = ORIGIN + '/index.html?v=' + Date.now();
@@ -287,6 +287,8 @@ const bannerOrder = await ev(`(() => ({
 }))()`);
 ok('4m 下方 Banner 从最近到最远排列',
   bannerOrder.dates.length >= 2 && bannerOrder.first === '今天日历记录', bannerOrder);
+ok('4m2 日历记录日期显示为正常月日',
+  /^\d{1,2}月\d{1,2}日 · 周[一二三四五六日]$/.test(bannerOrder.dates[0] || ''), bannerOrder.dates);
 
 /* 5. 日程：今天起 7 张、一行起步、跨天滚动、富文本提醒 */
 await ev(`document.querySelector('.nav-group[data-nav-wrap="action"] .tab[data-tab="agenda"]').click()`);

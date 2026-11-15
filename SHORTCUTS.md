@@ -7,9 +7,13 @@
 - 音频（iCloud Drive）：
   - `Shortcuts/MorningTalk/乔布斯_成长赋能vol26.m4a`
   - `Shortcuts/MorningTalk/奥巴马_最令人开眼演讲.m4a`
+  - `Shortcuts/MorningTalk/【中英】暗淡蓝点 - 卡尔·萨根.m4a`
+  - `Shortcuts/MorningTalk/【大字幕】英语名人演讲 油管搬砖 English Speeches with Big Subtitles 【更新ing】 p03 贝拉克·奥巴马BARACK OBAMA - Yes We Can.m4a`
 - 原视频（iCloud Drive）：
   - `Shortcuts/MorningTalk-Source/Video/乔布斯_成长赋能vol26.mp4`
   - `Shortcuts/MorningTalk-Source/Video/奥巴马_最令人开眼演讲.mp4`
+  - `Shortcuts/MorningTalk-Source/Video/【中英】暗淡蓝点 - 卡尔·萨根.mp4`
+  - `Shortcuts/MorningTalk-Source/Video/【大字幕】英语名人演讲 油管搬砖 English Speeches with Big Subtitles 【更新ing】 p03 贝拉克·奥巴马BARACK OBAMA - Yes We Can.mp4`
 - 已签名快捷指令：
   - `Shortcuts/Shortcut-Import/早安演讲-随机播放.shortcut`
   - 仓库副本：`shortcuts/早安演讲-随机播放.shortcut`

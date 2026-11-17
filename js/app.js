@@ -965,21 +965,137 @@
   }
 
   /* ---------- 日程：今天起 7 张按日期绑定的富文本纸 ---------- */
+  const DAY_SECTIONS = [
+    { key: 'work', label: '工作' },
+    { key: 'career', label: '事业' },
+    { key: 'life', label: '生活' }
+  ];
+  const DAY_SECTION_KEYS = DAY_SECTIONS.map((s) => s.key);
+  const daySectionByKey = (key) => DAY_SECTIONS.find((s) => s.key === key) || null;
   const dayPaperKey = (date) => 'day:' + date;
   const dayPaperEditorId = (date) => 'daypaper-' + date;
   const dayPaperToolbarId = (date) => 'daypaper-toolbar-' + date;
+  function dayPlainFromHtml(html) {
+    const box = document.createElement('div');
+    box.innerHTML = sanitizeMemoHtml(html);
+    return memoDomPlain(box);
+  }
+  function daySectionBodiesFromHtml(html) {
+    const root = document.createElement('div');
+    root.innerHTML = sanitizeMemoHtml(html);
+    const bodies = {};
+    DAY_SECTION_KEYS.forEach((key) => { bodies[key] = ''; });
+    const sections = Array.from(root.querySelectorAll('[data-day-section]'));
+    if (!sections.length) {
+      bodies.work = root.innerHTML;
+      return bodies;
+    }
+    const seen = new Set();
+    const extras = [];
+    Array.from(root.childNodes).forEach((node) => {
+      if (node.nodeType === 3 && !String(node.nodeValue || '').trim()) return;
+      if (node.nodeType === 1 && node.hasAttribute('data-day-section')) return;
+      if (node.nodeType === 1) extras.push(node.outerHTML);
+      else if (String(node.nodeValue || '').trim()) extras.push(esc(node.nodeValue));
+    });
+    sections.forEach((section) => {
+      const key = String(section.getAttribute('data-day-section') || '');
+      if (!daySectionByKey(key) || seen.has(key)) return;
+      seen.add(key);
+      const body = section.querySelector('[data-day-section-body="' + key + '"]');
+      if (body) {
+        bodies[key] = body.innerHTML;
+        return;
+      }
+      const clone = section.cloneNode(true);
+      clone.querySelectorAll('[data-day-section-title]').forEach((title) => title.remove());
+      bodies[key] = clone.innerHTML;
+    });
+    if (extras.length) bodies.work = (bodies.work || '') + extras.join('');
+    return bodies;
+  }
+  function daySectionBodiesFromText(text) {
+    const lines = normalizeMemoPlain(text).split('\n');
+    const positions = [];
+    if (!lines.length || lines[0].trim() !== DAY_SECTIONS[0].label) {
+      const fallback = {};
+      DAY_SECTION_KEYS.forEach((key) => { fallback[key] = ''; });
+      fallback.work = normalizeMemoPlain(text);
+      return fallback;
+    }
+    let from = 0;
+    DAY_SECTIONS.forEach((section) => {
+      let found = -1;
+      for (let i = from; i < lines.length; i += 1) {
+        if (lines[i].trim() === section.label) { found = i; break; }
+      }
+      positions.push(found);
+      if (found >= 0) from = found + 1;
+    });
+    if (positions.some((i) => i < 0)) {
+      const fallback = {};
+      DAY_SECTION_KEYS.forEach((key) => { fallback[key] = ''; });
+      fallback.work = normalizeMemoPlain(text);
+      return fallback;
+    }
+    const bodies = {};
+    DAY_SECTIONS.forEach((section, i) => {
+      const end = i + 1 < positions.length ? positions[i + 1] : lines.length;
+      bodies[section.key] = normalizeMemoPlain(lines.slice(positions[i] + 1, end).join('\n'));
+    });
+    return bodies;
+  }
+  function daySectionHasContent(html) {
+    return !!String(dayPlainFromHtml(html) || '').trim() || memoHtmlHasContent(html);
+  }
+  function daySectionShellHtml(key, bodyHtml) {
+    const section = daySectionByKey(key);
+    if (!section) return '';
+    const body = sanitizeMemoHtml(bodyHtml || '');
+    return '<div data-day-section="' + key + '">' +
+      '<div data-day-section-title="' + key + '"><span>' + esc(section.label) + '</span></div>' +
+      '<div data-day-section-body="' + key + '">' +
+        (daySectionHasContent(body) ? body : '<div><br></div>') +
+      '</div></div>';
+  }
+  function dayPaperHtmlFromBodies(bodies) {
+    return DAY_SECTIONS.map((section) =>
+      daySectionShellHtml(section.key, bodies && bodies[section.key])
+    ).join('');
+  }
+  function dayPaperNormalizeHtml(html) {
+    return dayPaperHtmlFromBodies(daySectionBodiesFromHtml(html));
+  }
+  function dayPaperHasVisibleContent(html) {
+    const bodies = daySectionBodiesFromHtml(html);
+    return DAY_SECTION_KEYS.some((key) => daySectionHasContent(bodies[key]));
+  }
+  function dayPaperRawHtmlForItem(item) {
+    const text = item && typeof item.memo === 'string' ? item.memo : '';
+    return memoHtmlForItem(item, text) || memoTextToHtml(text);
+  }
+  function decorateDayPaperSections(root) {
+    if (!root || !root.querySelectorAll) return;
+    const editors = root.classList && root.classList.contains('day-paper-editor')
+      ? [root]
+      : Array.from(root.querySelectorAll('.day-paper-editor'));
+    editors.forEach((ed) => {
+      ed.querySelectorAll('[data-day-section-title]').forEach((title) => {
+        title.setAttribute('contenteditable', 'false');
+        title.setAttribute('spellcheck', 'false');
+      });
+    });
+  }
   function dayPaperTextNow(date) {
     const st = richDocState(dayPaperKey(date));
     if (st && st.draft != null) return st.draft;
-    const item = dayPaperFor(date);
-    return item && typeof item.memo === 'string' ? item.memo : '';
+    return dayPlainFromHtml(dayPaperHtmlNow(date));
   }
   function dayPaperHtmlNow(date) {
     const st = richDocState(dayPaperKey(date));
-    if (st && st.html != null) return st.html;
+    if (st && st.html != null) return dayPaperNormalizeHtml(st.html);
     const item = dayPaperFor(date);
-    const text = dayPaperTextNow(date);
-    return memoHtmlForItem(item, text) || memoTextToHtml(text);
+    return dayPaperNormalizeHtml(dayPaperRawHtmlForItem(item));
   }
   function dayPaperStamp(date) {
     const item = dayPaperFor(date);
@@ -994,9 +1110,10 @@
     if (st.timer) { clearTimeout(st.timer); st.timer = null; }
     if (!st.dirty && st.draft == null) return;
     const ed = document.getElementById(dayPaperEditorId(date));
-    const text = ed ? memoEditorPlain(ed) : st.draft;
-    if (text == null) return;
-    const html = ed ? memoEditorHtml(ed) : (st.html != null ? st.html : memoTextToHtml(text));
+    const rawHtml = ed ? memoEditorHtml(ed) : (st.html != null ? st.html : memoTextToHtml(st.draft || ''));
+    if (rawHtml == null) return;
+    const html = dayPaperNormalizeHtml(rawHtml);
+    const text = dayPlainFromHtml(html);
     st.dirty = false;
     const item = dayPaperFor(date);
     const prevText = item && typeof item.memo === 'string' ? item.memo : '';
@@ -1036,7 +1153,7 @@
     st.dirty = true;
     st.draft = memoEditorPlain(ed);
     st.html = memoEditorHtml(ed);
-    ed.classList.toggle('is-empty', !st.draft.trim() && !ed.querySelector('table,hr,img,[data-flow]'));
+    ed.classList.toggle('is-empty', !dayPaperHasVisibleContent(st.html));
     dayPaperMeta(date);
     if (st.timer) clearTimeout(st.timer);
     st.timer = setTimeout(() => {
@@ -1048,12 +1165,22 @@
   function applyDayPaperText(date, text) {
     const key = dayPaperKey(date);
     const st = richDocState(key);
-    const oldText = dayPaperTextNow(date);
-    const oldHtml = dayPaperHtmlNow(date);
-    const html = memoRichFromText(oldText, oldHtml, text);
+    const oldHtml = dayPaperNormalizeHtml(dayPaperHtmlNow(date));
+    const oldBodies = daySectionBodiesFromHtml(oldHtml);
+    const newBodies = daySectionBodiesFromText(text);
+    const nextBodies = {};
+    DAY_SECTIONS.forEach((section) => {
+      const oldBody = oldBodies[section.key] || '';
+      const oldBodyText = dayPlainFromHtml(oldBody);
+      const nextBodyText = newBodies[section.key] || '';
+      nextBodies[section.key] = nextBodyText === oldBodyText
+        ? oldBody
+        : memoRichFromText(oldBodyText, oldBody, nextBodyText);
+    });
+    const html = dayPaperHtmlFromBodies(nextBodies);
     const ed = document.getElementById(dayPaperEditorId(date));
     if (ed) memoSetEditor(ed, html);
-    st.draft = normalizeMemoPlain(text);
+    st.draft = dayPlainFromHtml(html);
     st.html = html;
     st.dirty = true;
     flushDayPaper(date);
@@ -1066,9 +1193,8 @@
       dates.map((date, i) => {
         const key = dayPaperKey(date);
         const st = richDocState(key);
-        const text = st.draft != null ? st.draft : dayPaperTextNow(date);
-        const html = sanitizeMemoHtml(dayPaperHtmlNow(date));
-        const empty = !String(text || '').trim() && !memoHtmlHasContent(html);
+        const html = dayPaperNormalizeHtml(st.html != null ? st.html : dayPaperHtmlNow(date));
+        const empty = !dayPaperHasVisibleContent(html);
         const d = Core.parseDate(date);
         return '<section class="card agenda-card' + (i === 0 ? ' is-today' : '') + '">' +
           '<div class="agenda-head"><div><h3>' + Core.fmtCN(date) + '</h3>' +
@@ -1093,55 +1219,44 @@
   let dayRolloverRunning = false;
   let dayRolloverQueued = false;
   function dayPaperHasText(item) {
-    return !!String(item && item.memo || '').trim() ||
-      !!memoHtmlHasContent(item && item.memoHtml);
+    return dayPaperHasVisibleContent(dayPaperRawHtmlForItem(item));
   }
   function prependRolloverLabel(html, label) {
-    const box = document.createElement('div');
-    box.innerHTML = sanitizeMemoHtml(html);
-    const mark = document.createElement('b');
-    mark.className = 'day-rollover-mark';
-    mark.setAttribute('data-rollover', '1');
-    mark.textContent = label;
-    const first = box.firstElementChild;
-    if (first && first.tagName !== 'TABLE' && first.tagName !== 'HR' &&
-        first.tagName !== 'IMG' && !first.hasAttribute('data-flow')) {
-      first.insertBefore(mark, first.firstChild);
-    } else {
-      box.insertBefore(mark, box.firstChild);
-    }
-    return box.innerHTML;
+    return '<div><b class="day-rollover-mark" data-rollover="1">' + esc(label) + '</b></div>' +
+      sanitizeMemoHtml(html);
   }
   function rollDayPapers() {
     if (dayRolloverRunning) return;
     const d = today();
-    const past = dayPapers()
-      .filter((p) => p.date < d && dayPaperHasText(p))
-      .sort((a, b) => a.date < b.date ? -1 : 1);
-    if (!past.length) return;
+    const yesterday = Core.shiftDate(d, -1);
+    const yesterdayCopies = dayPapers().filter((p) => p.date === yesterday);
+    if (!yesterdayCopies.length) return;
+    const visible = yesterdayCopies.slice().sort((a, b) =>
+      String(b.updatedAt || '') < String(a.updatedAt || '') ? -1 : 1
+    )[0];
+    if (!visible || !dayPaperHasText(visible)) return;
+    const sourceHtml = dayPaperNormalizeHtml(dayPaperRawHtmlForItem(visible));
+    const sourceBodies = daySectionBodiesFromHtml(sourceHtml);
     const target = dayPaperFor(d);
-    const targetText = target && typeof target.memo === 'string' ? target.memo : '';
-    const targetHtml = target ? (target.memoHtml || memoTextToHtml(targetText)) : '';
-    const chunks = past.map((p) => {
-      const label = p.date === Core.shiftDate(d, -1)
-        ? '昨天剩下内容：'
-        : shortDay(p.date) + ' 剩下内容：';
-      const text = String(p.memo || '').trim();
-      const html = sanitizeMemoHtml(p.memoHtml || memoTextToHtml(text));
-      return {
-        label, text, html,
-        plain: label + text,
-        rich: prependRolloverLabel(html, label)
-      };
+    const targetHtml = target ? dayPaperNormalizeHtml(dayPaperRawHtmlForItem(target)) : '';
+    const targetBodies = daySectionBodiesFromHtml(targetHtml);
+    const mergedBodies = {};
+    DAY_SECTIONS.forEach((section) => {
+      const sourceBody = sourceBodies[section.key] || '';
+      if (!daySectionHasContent(sourceBody)) {
+        mergedBodies[section.key] = targetBodies[section.key] || '';
+        return;
+      }
+      const rolled = prependRolloverLabel(sourceBody, '昨天剩下内容：');
+      mergedBodies[section.key] = daySectionHasContent(targetBodies[section.key])
+        ? rolled + '<div><br></div><div><br></div>' + targetBodies[section.key]
+        : rolled;
     });
-    const spacer = '<div><br></div><div><br></div>';
-    const mergedText = chunks.map((x) => x.plain).join('\n\n\n') +
-      (String(targetText || '').trim() ? '\n\n\n' + targetText : '');
-    const mergedHtml = chunks.map((x) => x.rich).join(spacer) +
-      (memoHtmlHasContent(targetHtml) || String(targetText || '').trim() ? spacer + targetHtml : '');
+    const mergedHtml = dayPaperHtmlFromBodies(mergedBodies);
+    const mergedText = dayPlainFromHtml(mergedHtml);
     dayRolloverRunning = true;
     try {
-      past.forEach((p) => {
+      yesterdayCopies.forEach((p) => {
         store.saveTask(Object.assign({}, p, {
           memo: '',
           memoHtml: '',
@@ -1156,9 +1271,10 @@
         date: d,
         memo: mergedText,
         memoHtml: mergedHtml || memoTextToHtml(mergedText),
+        rolledFrom: Array.from(new Set([].concat(target && target.rolledFrom || [], [yesterday]))),
         updatedAt: new Date().toISOString()
       }));
-      toast('已把之前没写完的日程滚到今天');
+      toast('已把昨天剩余日程按工作 / 事业 / 生活滚到今天');
     } finally {
       dayRolloverRunning = false;
     }
@@ -1489,6 +1605,10 @@
             return;
           }
           if (tag === 'B' && name === 'data-rollover' && attr.value === '1') return;
+          if (tag === 'DIV' && name === 'data-day-section' &&
+              /^(work|career|life)$/.test(attr.value)) return;
+          if (tag === 'DIV' && (name === 'data-day-section-body' || name === 'data-day-section-title') &&
+              /^(work|career|life)$/.test(attr.value)) return;
           if (tag === 'DIV' && name === 'data-flow' &&
               /^[a-z0-9_-]{4,200000}$/i.test(attr.value)) return;
           node.removeAttribute(attr.name);
@@ -1698,6 +1818,7 @@
   function memoSetEditor(ed, html) {
     if (!ed) return;
     ed.innerHTML = sanitizeMemoHtml(html);
+    decorateDayPaperSections(ed);
     hydrateFlowFigures(ed);
     const has = !!(ed.textContent || '').trim() || !!ed.querySelector('table,hr,img,[data-flow]');
     ed.classList.toggle('is-empty', !has);
@@ -4379,6 +4500,7 @@
   function bindDynamicEvents() {
     closeTablePicker();
     hydrateFlowFigures($('#view'));
+    decorateDayPaperSections($('#view'));
     const b = $('#btn-plan-add');
     if (b) b.addEventListener('click', () => {
       const title = $('#p-title').value.trim();

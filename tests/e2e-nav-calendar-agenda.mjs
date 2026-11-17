@@ -1,4 +1,4 @@
-/* v55：分层导航、日历、日程七天纸、今日四块提醒、富文本提醒统一进今日顶部 */
+/* v56：分层导航、日历、日程三层纸、今日四块提醒、富文本提醒统一进今日顶部 */
 const CDP = 'http://127.0.0.1:9334';
 const ORIGIN = 'http://127.0.0.1:8123';
 const URL_ = ORIGIN + '/index.html?v=' + Date.now();
@@ -124,11 +124,18 @@ const dates = await ev(`(() => {
   const t = Core.todayStr();
   return {
     t, y: Core.shiftDate(t, -1), p3: Core.shiftDate(t, 3), p10: Core.shiftDate(t, 10),
-    wd: new Date().getDay(), old: Core.shiftDate(t, -30)
+    o3: Core.shiftDate(t, -3), wd: new Date().getDay(), old: Core.shiftDate(t, -30)
   };
 })()`);
 const otherWd = (dates.wd + 3) % 7;
 const stamp = new Date().toISOString();
+const daySection = (key, label, text) =>
+  '<div data-day-section="' + key + '"><div data-day-section-title="' + key + '"><span>' +
+  label + '</span></div><div data-day-section-body="' + key + '"><div>' + text + '</div></div></div>';
+const yesterdayMemo = '工作\n昨天工作的日程\n事业\n昨天事业的日程\n生活\n昨天生活的日程';
+const yesterdayHtml = daySection('work', '工作', '昨天工作的日程') +
+  daySection('career', '事业', '昨天事业的日程') +
+  daySection('life', '生活', '昨天生活的日程');
 const tasks = [
   { id: 'loop1', kind: 'loop', title: '今日循环站会', weekdays: [dates.wd], doneWeeks: [], created: dates.old, notes: [], updatedAt: stamp },
   { id: 'loop2', kind: 'loop', title: '别天循环复盘', weekdays: [otherWd], doneWeeks: [], created: dates.old, notes: [], updatedAt: stamp },
@@ -144,7 +151,9 @@ const tasks = [
   { id: 'memo1', kind: 'memo', title: '琐事', memo: '交房租 ⏰' + dates.t, memoHtml: '<div>交房租 ⏰' + dates.t + '</div>', created: dates.old, notes: [], updatedAt: stamp },
   { id: 'monthnote1', kind: 'monthnote', title: '计划底稿', memo: '排期底稿提醒 ⏰' + dates.t, memoHtml: '<div>排期底稿提醒 ⏰' + dates.t + '</div>', created: dates.old, notes: [], updatedAt: stamp },
   { id: 'report1', kind: 'weekreport', title: '测试周报', memo: '周报提醒 ⏰' + dates.t, memoHtml: '<div>周报提醒 ⏰' + dates.t + '</div>', createdAt: stamp, created: dates.old, notes: [], updatedAt: stamp },
-  { id: 'day-y', kind: 'daypaper', title: '日程 ' + dates.y, date: dates.y, memo: '昨天没写完的日程', memoHtml: '<div>昨天没写完的日程</div>', updatedAt: '2026-01-04T00:00:00.000Z' },
+  { id: 'day-y', kind: 'daypaper', title: '日程 ' + dates.y, date: dates.y, memo: yesterdayMemo, memoHtml: yesterdayHtml, updatedAt: '2026-01-04T00:00:00.000Z' },
+  { id: 'day-y-stale', kind: 'daypaper', title: '日程旧副本 ' + dates.y, date: dates.y, memo: '已删除的旧副本', memoHtml: '<div>已删除的旧副本</div>', updatedAt: '2026-01-03T00:00:00.000Z' },
+  { id: 'day-old3', kind: 'daypaper', title: '日程 ' + dates.o3, date: dates.o3, memo: '三天前未完成', memoHtml: '<div>三天前未完成</div>', updatedAt: '2026-01-02T00:00:00.000Z' },
   { id: 'day-today', kind: 'daypaper', title: '日程 ' + dates.t, date: dates.t, memo: '下午准备周会 ⏰' + dates.t, memoHtml: '<div>下午准备周会 ⏰' + dates.t + '</div>', updatedAt: '2026-01-05T00:00:00.000Z' },
   { id: 'work1', kind: 'work', title: '公司旧待办', due: dates.t, done: false, created: dates.t, notes: [], updatedAt: stamp }
 ];
@@ -310,26 +319,67 @@ await waitFor(`!!document.getElementById('daypaper-${dates.t}') &&
   /昨天剩下内容/.test(document.getElementById('daypaper-${dates.t}').textContent)`);
 ok('5a 日程页正好 7 张纸', (await ev(`document.querySelectorAll('.agenda-card').length`)) === 7);
 ok('5b 七张纸都有富文本编辑器', (await ev(`document.querySelectorAll('.agenda-card .day-paper-editor[contenteditable="true"]').length`)) === 7);
+const sectionLayout = await ev(`(() => {
+  const eds = [...document.querySelectorAll('.day-paper-editor')];
+  const titles = [...document.querySelectorAll('.day-paper-editor [data-day-section-title]')];
+  const second = document.querySelector('.day-paper-editor [data-day-section="career"]');
+  return {
+    sections: eds.reduce((n, ed) => n + ed.querySelectorAll('[data-day-section]').length, 0),
+    titles: titles.length,
+    locked: titles.every((x) => x.getAttribute('contenteditable') === 'false'),
+    divider: second ? parseFloat(getComputedStyle(second).borderTopWidth) : 0
+  };
+})()`);
+ok('5b2 每张日程纸固定分工作 / 事业 / 生活三层',
+  sectionLayout.sections === 21 && sectionLayout.titles === 21, sectionLayout);
+ok('5b3 三层标题不可编辑且有清晰分隔线',
+  sectionLayout.locked && sectionLayout.divider >= 1, sectionLayout);
 const blankPaper = await ev(`(() => {
   const ed = document.querySelector('#daypaper-${dates.p3}');
   return { found: !!ed, h: ed && ed.getBoundingClientRect().height };
 })()`);
-ok('5c 空白纸初始高度接近一行', blankPaper.found && blankPaper.h <= 90, blankPaper);
+ok('5c 空白纸仍是一张短纸', blankPaper.found && blankPaper.h <= 230, blankPaper);
 const todayPaper = await ev(`(() => {
   const ed = document.querySelector('#daypaper-${dates.t}');
-  return { text: ed ? ed.textContent : '', h: ed ? ed.getBoundingClientRect().height : 0 };
+  const body = (key) => {
+    const el = ed && ed.querySelector('[data-day-section-body="' + key + '"]');
+    return el ? el.textContent : '';
+  };
+  const marks = ed ? [...ed.querySelectorAll('b[data-rollover]')] : [];
+  const firstMark = marks[0] ? getComputedStyle(marks[0]) : null;
+  return {
+    text: ed ? ed.textContent : '',
+    work: body('work'),
+    career: body('career'),
+    life: body('life'),
+    marks: marks.length,
+    markSize: firstMark ? parseFloat(firstMark.fontSize) : 0,
+    markWeight: firstMark ? parseInt(firstMark.fontWeight, 10) : 0
+  };
 })()`);
-ok('5d 昨天剩下的内容滚到今天最前面',
-  /昨天剩下内容：/.test(todayPaper.text) && /昨天没写完的日程/.test(todayPaper.text), todayPaper.text);
-ok('5e 今天原有内容排在滚动内容后面', /昨天没写完的日程[\s\S]*下午准备周会/.test(todayPaper.text), todayPaper.text);
+ok('5d 昨天三层内容分别滚到今天对应分区',
+  /昨天剩下内容：/.test(todayPaper.work) && /昨天工作的日程/.test(todayPaper.work) &&
+  /昨天剩下内容：/.test(todayPaper.career) && /昨天事业的日程/.test(todayPaper.career) &&
+  /昨天剩下内容：/.test(todayPaper.life) && /昨天生活的日程/.test(todayPaper.life), todayPaper);
+ok('5d2 每个有内容的分区都有大字加粗迁移标题',
+  todayPaper.marks === 3 && todayPaper.markSize >= 16 && todayPaper.markWeight >= 700, todayPaper);
+ok('5e 今天原有内容排在滚动内容后面',
+  /昨天工作的日程[\s\S]*下午准备周会/.test(todayPaper.work), todayPaper.work);
 const oldDay = await remoteOne('day-y');
 ok('5f 滚动后昨天那张纸已清空并标记 rolledTo', oldDay && !String(oldDay.memo || '').trim() && oldDay.rolledTo === dates.t, oldDay);
+const staleDay = await remoteOne('day-y-stale');
+ok('5f2 同日期的旧副本也清空，已删除内容不会复活',
+  staleDay && !String(staleDay.memo || '').trim() && staleDay.rolledTo === dates.t &&
+  !/已删除的旧副本/.test(todayPaper.text), staleDay);
+const oldThreeDay = await remoteOne('day-old3');
+ok('5f3 三天前的日程不会跟着迁移', oldThreeDay && oldThreeDay.memo === '三天前未完成', oldThreeDay);
 await ev(`(() => { const ed = document.querySelector('#daypaper-${dates.t}');
   ed.innerHTML += '<div>今天的新日程</div>'; ed.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`);
 await wait(1300);
 const todayPaperRemote = (await remoteTasks()).find((x) => x.kind === 'daypaper' && x.date === dates.t);
 ok('5g 日程纸自动保存', todayPaperRemote && /今天的新日程/.test(todayPaperRemote.memo || ''), todayPaperRemote);
-ok('5g2 滚动前缀保留粗体', await ev(`!!document.querySelector('.day-paper-editor b[data-rollover]')`));
+ok('5g2 保存后迁移标题仍保留粗体',
+  await ev(`!!document.querySelector('.day-paper-editor b[data-rollover]')`));
 ok('5g3 滚动原文与今天内容之间留两行',
   !!todayPaperRemote && /<div><br><\/div><div><br><\/div>/.test(todayPaperRemote.memoHtml || ''),
   todayPaperRemote && todayPaperRemote.memoHtml);
@@ -391,6 +441,10 @@ ok('8b 刷新后娱乐数据仍在', /今晚看一部电影/.test(await ev(`(() 
   return f ? f.memo : '';
 })()`)));
 ok('8c 刷新后日历记录仍在', (await remoteTasks()).filter((x) => x.kind === 'calendar_note').length >= 2);
+const todayAfterReload = (await remoteTasks()).find((x) => x.kind === 'daypaper' && x.date === dates.t);
+const rollMarksAfterReload = ((todayAfterReload && todayAfterReload.memoHtml) || '')
+  .match(/data-rollover="1"/g) || [];
+ok('8e 刷新后不会重复迁移同一批内容', rollMarksAfterReload.length === 3, rollMarksAfterReload.length);
 ok('8d 全程无 JS 报错', errors.length === 0, errors.slice(0, 3));
 
 dump();

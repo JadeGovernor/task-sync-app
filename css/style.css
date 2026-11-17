@@ -515,7 +515,50 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
   margin: .5em 0; padding-left: 10px; border-left: 3px solid #cbd5e1; color: #475569;
 }
 .memo-editor .day-rollover-mark,
-.memo-editor b[data-rollover] { color: #b45309; }
+.memo-editor b[data-rollover] {
+  display: inline-block;
+  margin: 0 0 5px;
+  color: #b45309;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.35;
+  letter-spacing: .01em;
+}
+.day-paper-editor [data-day-section] { position: relative; }
+.day-paper-editor [data-day-section] + [data-day-section] {
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1.5px solid #cbd5e1;
+}
+.day-paper-editor [data-day-section-title] {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 6px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+  letter-spacing: .08em;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.day-paper-editor [data-day-section-title]:before {
+  content: "";
+  width: 5px;
+  height: 14px;
+  border-radius: 999px;
+  background: #64748b;
+  flex: none;
+}
+.day-paper-editor [data-day-section="work"] [data-day-section-title] { color: #1d4ed8; }
+.day-paper-editor [data-day-section="work"] [data-day-section-title]:before { background: #3b82f6; }
+.day-paper-editor [data-day-section="career"] [data-day-section-title] { color: #a16207; }
+.day-paper-editor [data-day-section="career"] [data-day-section-title]:before { background: #eab308; }
+.day-paper-editor [data-day-section="life"] [data-day-section-title] { color: #15803d; }
+.day-paper-editor [data-day-section="life"] [data-day-section-title]:before { background: #22c55e; }
+.day-paper-editor [data-day-section-body] { min-height: 25px; }
+.day-paper-editor.is-empty:before { display: none; }
 .memo-editor table {
   width: 100%; margin: 8px 0 12px; border-collapse: collapse;
   table-layout: fixed; font-size: 14px; line-height: 1.5;

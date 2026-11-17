@@ -1147,11 +1147,13 @@
     const key = dayPaperKey(date);
     const st = richDocState(key);
     if (st.timer) { clearTimeout(st.timer); st.timer = null; }
-    if (!st.dirty && st.draft == null) return;
     const hasSectionEditors = DAY_SECTIONS.some((section) => {
       const ed = dayPaperSectionEditor(date, section.key);
       return !!(ed && ed.isConnected);
     });
+    /* 不能只看 dirty 标记：Safari / 中文输入法偶尔会漏发 input 事件。
+     * 只要编辑区还挂在页面上，切页、失焦、关页面前都必须直接读取 DOM 再比对保存。 */
+    if (!hasSectionEditors && !st.dirty && st.draft == null) return;
     const rawHtml = hasSectionEditors
       ? dayPaperEditorHtml(date)
       : (st.html != null ? st.html : memoTextToHtml(st.draft || ''));
@@ -5182,6 +5184,19 @@
   store.init();
   queueDayRollover();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloadingForUpdate = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloadingForUpdate) return;
+      reloadingForUpdate = true;
+      flushMemo();
+      flushMonth();
+      flushAllRichDocs();
+      location.reload();
+    });
+    navigator.serviceWorker.register('./sw.js').then((reg) => {
+      reg.update().catch(() => {});
+      setInterval(() => reg.update().catch(() => {}), 5 * 60 * 1000);
+    }).catch(() => {});
   }
 })();

@@ -444,6 +444,17 @@ ok('5l 日程提醒只改光标所在行，前面两行都保留',
 ok('5m 提醒保存后三层标题仍完整',
   await ev(`['work','career','life'].every((key) =>
     !!document.querySelector('#daypaper-${dates.p3} [data-day-section="' + key + '"] [data-day-section-title]'))`));
+await ev(`(() => {
+  const ed = document.getElementById('daypaper-${dates.p3}-work');
+  ed.innerHTML += '<div>切页无事件第一行</div><div>切页无事件第二行</div>';
+  document.querySelector('.tab[data-tab="idea"]').click();
+  return 1;
+})()`);
+await wait(1200);
+const noEventPaper = (await remoteTasks()).find((x) => x.kind === 'daypaper' && x.date === dates.p3);
+ok('5n 即使输入法漏发 input 事件，切页仍会直接读 DOM 保存两行',
+  noEventPaper && /切页无事件第一行/.test(noEventPaper.memo || '') &&
+  /切页无事件第二行/.test(noEventPaper.memo || ''), noEventPaper && noEventPaper.memo);
 
 /* 6. 今日：提醒在最顶，然后 循环→打卡→项目→日历 */
 await ev(`document.querySelector('.nav-today').click()`);

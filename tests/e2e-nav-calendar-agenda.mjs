@@ -1,4 +1,4 @@
-/* v56：分层导航、日历、日程三层纸、今日四块提醒、富文本提醒统一进今日顶部 */
+/* v57：分层导航、日历、日程三层独立编辑区、今日四块提醒、富文本提醒统一进今日顶部 */
 const CDP = 'http://127.0.0.1:9334';
 const ORIGIN = 'http://127.0.0.1:8123';
 const URL_ = ORIGIN + '/index.html?v=' + Date.now();
@@ -318,7 +318,8 @@ await waitFor(`document.querySelectorAll('.agenda-card').length === 7`);
 await waitFor(`!!document.getElementById('daypaper-${dates.t}') &&
   /昨天剩下内容/.test(document.getElementById('daypaper-${dates.t}').textContent)`);
 ok('5a 日程页正好 7 张纸', (await ev(`document.querySelectorAll('.agenda-card').length`)) === 7);
-ok('5b 七张纸都有富文本编辑器', (await ev(`document.querySelectorAll('.agenda-card .day-paper-editor[contenteditable="true"]').length`)) === 7);
+ok('5b 七张纸各有三层独立富文本编辑区',
+  (await ev(`document.querySelectorAll('.agenda-card .day-paper-section-editor[contenteditable="true"]').length`)) === 21);
 const sectionLayout = await ev(`(() => {
   const eds = [...document.querySelectorAll('.day-paper-editor')];
   const titles = [...document.querySelectorAll('.day-paper-editor [data-day-section-title]')];
@@ -327,6 +328,7 @@ const sectionLayout = await ev(`(() => {
     sections: eds.reduce((n, ed) => n + ed.querySelectorAll('[data-day-section]').length, 0),
     titles: titles.length,
     locked: titles.every((x) => x.getAttribute('contenteditable') === 'false'),
+    outsideEditors: titles.every((x) => !x.closest('[contenteditable="true"]')),
     divider: second ? parseFloat(getComputedStyle(second).borderTopWidth) : 0
   };
 })()`);
@@ -334,6 +336,8 @@ ok('5b2 每张日程纸固定分工作 / 事业 / 生活三层',
   sectionLayout.sections === 21 && sectionLayout.titles === 21, sectionLayout);
 ok('5b3 三层标题不可编辑且有清晰分隔线',
   sectionLayout.locked && sectionLayout.divider >= 1, sectionLayout);
+ok('5b4 三层标题在编辑区外，删除正文不会带走标题',
+  sectionLayout.outsideEditors, sectionLayout);
 const blankPaper = await ev(`(() => {
   const ed = document.querySelector('#daypaper-${dates.p3}');
   return { found: !!ed, h: ed && ed.getBoundingClientRect().height };
@@ -342,7 +346,7 @@ ok('5c 空白纸仍是一张短纸', blankPaper.found && blankPaper.h <= 230, bl
 const todayPaper = await ev(`(() => {
   const ed = document.querySelector('#daypaper-${dates.t}');
   const body = (key) => {
-    const el = ed && ed.querySelector('[data-day-section-body="' + key + '"]');
+    const el = document.getElementById('daypaper-${dates.t}-' + key);
     return el ? el.textContent : '';
   };
   const marks = ed ? [...ed.querySelectorAll('b[data-rollover]')] : [];
@@ -373,7 +377,7 @@ ok('5f2 同日期的旧副本也清空，已删除内容不会复活',
   !/已删除的旧副本/.test(todayPaper.text), staleDay);
 const oldThreeDay = await remoteOne('day-old3');
 ok('5f3 三天前的日程不会跟着迁移', oldThreeDay && oldThreeDay.memo === '三天前未完成', oldThreeDay);
-await ev(`(() => { const ed = document.querySelector('#daypaper-${dates.t}');
+await ev(`(() => { const ed = document.getElementById('daypaper-${dates.t}-work');
   ed.innerHTML += '<div>今天的新日程</div>'; ed.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`);
 await wait(1300);
 const todayPaperRemote = (await remoteTasks()).find((x) => x.kind === 'daypaper' && x.date === dates.t);
@@ -385,6 +389,61 @@ ok('5g3 滚动原文与今天内容之间留两行',
   todayPaperRemote && todayPaperRemote.memoHtml);
 ok('5h 日程纸有富文本工具栏', await ev(`!!document.querySelector('.agenda-card .rich-toolbar')`));
 ok('5i 日程纸有独立提醒入口', await ev(`!!document.querySelector('[data-action="day-timer-add"]')`));
+await ev(`(() => {
+  const ed = document.getElementById('daypaper-${dates.p3}-work');
+  ed.innerHTML = '<div>周四第一行</div><div>周四第二行</div>';
+  ed.dispatchEvent(new Event('input', { bubbles: true }));
+  document.querySelector('.tab[data-tab="idea"]').click();
+  document.querySelector('.tab[data-tab="agenda"]').click();
+  return 1;
+})()`);
+await wait(900);
+const fastSwitchPaper = (await remoteTasks()).find((x) => x.kind === 'daypaper' && x.date === dates.p3);
+ok('5j 两层文字写完立刻切页也不会少行',
+  fastSwitchPaper && /周四第一行/.test(fastSwitchPaper.memo || '') &&
+  /周四第二行/.test(fastSwitchPaper.memo || ''), fastSwitchPaper);
+await ev(`(() => {
+  const ed = document.getElementById('daypaper-${dates.p3}-work');
+  ed.innerHTML = '';
+  ed.dispatchEvent(new Event('input', { bubbles: true }));
+  return 1;
+})()`);
+await wait(1000);
+const afterClearWork = await ev(`(() => ({
+  workTitle: !!document.querySelector('#daypaper-${dates.p3} [data-day-section="work"] [data-day-section-title]'),
+  careerTitle: !!document.querySelector('#daypaper-${dates.p3} [data-day-section="career"] [data-day-section-title]'),
+  lifeTitle: !!document.querySelector('#daypaper-${dates.p3} [data-day-section="life"] [data-day-section-title]'),
+  editors: document.querySelectorAll('#daypaper-${dates.p3} .day-paper-section-editor[contenteditable="true"]').length
+}))()`);
+ok('5k 清空工作层只清正文，三层结构和标题都还在',
+  afterClearWork.workTitle && afterClearWork.careerTitle && afterClearWork.lifeTitle &&
+  afterClearWork.editors === 3, afterClearWork);
+await ev(`(() => {
+  const ed = document.getElementById('daypaper-${dates.p3}-work');
+  ed.innerHTML = '<div>提醒保留第一行</div><div>提醒落在第二行</div>';
+  ed.dispatchEvent(new Event('input', { bubbles: true }));
+  ed.focus();
+  const node = ed.lastChild.firstChild;
+  const range = document.createRange();
+  range.setStart(node, 4);
+  range.collapse(true);
+  const sel = getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  document.querySelector('[data-day-timer-date="${dates.p3}"]').value = '${dates.p3}';
+  document.querySelector('[data-action="day-timer-add"][data-date="${dates.p3}"]').click();
+  return 1;
+})()`);
+await wait(1200);
+const timerPaper = (await remoteTasks()).find((x) => x.kind === 'daypaper' && x.date === dates.p3);
+const timerPaperText = timerPaper ? String(timerPaper.memo || '') : '';
+const timerLines = timerPaperText.split('\n');
+ok('5l 日程提醒只改光标所在行，前面两行都保留',
+  /提醒保留第一行/.test(timerPaperText) && /提醒落在第二行/.test(timerPaperText) &&
+  timerLines.some((line) => line.includes('提醒落在第二行') && line.includes('⏰' + dates.p3)), timerPaperText);
+ok('5m 提醒保存后三层标题仍完整',
+  await ev(`['work','career','life'].every((key) =>
+    !!document.querySelector('#daypaper-${dates.p3} [data-day-section="' + key + '"] [data-day-section-title]'))`));
 
 /* 6. 今日：提醒在最顶，然后 循环→打卡→项目→日历 */
 await ev(`document.querySelector('.nav-today').click()`);

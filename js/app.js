@@ -974,7 +974,9 @@
   const daySectionByKey = (key) => DAY_SECTIONS.find((s) => s.key === key) || null;
   const dayPaperKey = (date) => 'day:' + date;
   const dayPaperEditorId = (date) => 'daypaper-' + date;
+  const dayPaperSectionEditorId = (date, key) => dayPaperEditorId(date) + '-' + key;
   const dayPaperToolbarId = (date) => 'daypaper-toolbar-' + date;
+  const DAY_PAPER_ACTIVE = Object.create(null);
   function dayPlainFromHtml(html) {
     const box = document.createElement('div');
     box.innerHTML = sanitizeMemoHtml(html);
@@ -1002,14 +1004,16 @@
       const key = String(section.getAttribute('data-day-section') || '');
       if (!daySectionByKey(key) || seen.has(key)) return;
       seen.add(key);
-      const body = section.querySelector('[data-day-section-body="' + key + '"]');
-      if (body) {
-        bodies[key] = body.innerHTML;
-        return;
-      }
-      const clone = section.cloneNode(true);
-      clone.querySelectorAll('[data-day-section-title]').forEach((title) => title.remove());
-      bodies[key] = clone.innerHTML;
+      const holder = document.createElement('div');
+      Array.from(section.childNodes).forEach((node) => {
+        if (node.nodeType === 1 && node.hasAttribute('data-day-section-title')) return;
+        if (node.nodeType === 1 && node.hasAttribute('data-day-section-body')) {
+          Array.from(node.childNodes).forEach((child) => holder.appendChild(child.cloneNode(true)));
+          return;
+        }
+        holder.appendChild(node.cloneNode(true));
+      });
+      bodies[key] = holder.innerHTML;
     });
     if (extras.length) bodies.work = (bodies.work || '') + extras.join('');
     return bodies;
@@ -1086,6 +1090,41 @@
       });
     });
   }
+  function dayPaperSectionEditor(date, key) {
+    return document.getElementById(dayPaperSectionEditorId(date, key));
+  }
+  function dayPaperActiveEditor(date) {
+    const cached = DAY_PAPER_ACTIVE[date];
+    if (cached && cached.isConnected) return cached;
+    const first = dayPaperSectionEditor(date, DAY_SECTIONS[0].key);
+    DAY_PAPER_ACTIVE[date] = first;
+    return first;
+  }
+  function dayPaperEditorHtml(date) {
+    const st = richDocState(dayPaperKey(date));
+    const fallback = dayPaperNormalizeHtml(st.html != null ? st.html : dayPaperHtmlNow(date));
+    const bodies = daySectionBodiesFromHtml(fallback);
+    DAY_SECTIONS.forEach((section) => {
+      const ed = dayPaperSectionEditor(date, section.key);
+      if (ed && ed.isConnected) bodies[section.key] = memoEditorHtml(ed);
+    });
+    return dayPaperHtmlFromBodies(bodies);
+  }
+  function dayPaperSectionEditorHtml(date, section, bodyHtml) {
+    const body = sanitizeMemoHtml(bodyHtml || '');
+    const empty = !daySectionHasContent(body);
+    const prompt = section.key === 'work' ? '写工作安排…'
+      : section.key === 'career' ? '写事业推进…' : '写生活安排…';
+    return '<div data-day-section="' + section.key + '">' +
+      '<div data-day-section-title="' + section.key + '"><span>' + esc(section.label) + '</span></div>' +
+      '<div id="' + dayPaperSectionEditorId(date, section.key) + '"' +
+        ' class="memo-editor day-paper-section-editor' + (empty ? ' is-empty' : '') + '"' +
+        ' contenteditable="true" role="textbox" aria-multiline="true" spellcheck="false"' +
+        ' data-day-paper-date="' + date + '" data-day-section-editor="' + section.key + '"' +
+        ' data-placeholder="' + esc(prompt) + '">' +
+        (empty ? '<div><br></div>' : body) +
+      '</div></div>';
+  }
   function dayPaperTextNow(date) {
     const st = richDocState(dayPaperKey(date));
     if (st && st.draft != null) return st.draft;
@@ -1109,8 +1148,13 @@
     const st = richDocState(key);
     if (st.timer) { clearTimeout(st.timer); st.timer = null; }
     if (!st.dirty && st.draft == null) return;
-    const ed = document.getElementById(dayPaperEditorId(date));
-    const rawHtml = ed ? memoEditorHtml(ed) : (st.html != null ? st.html : memoTextToHtml(st.draft || ''));
+    const hasSectionEditors = DAY_SECTIONS.some((section) => {
+      const ed = dayPaperSectionEditor(date, section.key);
+      return !!(ed && ed.isConnected);
+    });
+    const rawHtml = hasSectionEditors
+      ? dayPaperEditorHtml(date)
+      : (st.html != null ? st.html : memoTextToHtml(st.draft || ''));
     if (rawHtml == null) return;
     const html = dayPaperNormalizeHtml(rawHtml);
     const text = dayPlainFromHtml(html);
@@ -1150,10 +1194,11 @@
   }
   function dayPaperOnInput(date, ed) {
     const st = richDocState(dayPaperKey(date));
+    const html = dayPaperEditorHtml(date);
     st.dirty = true;
-    st.draft = memoEditorPlain(ed);
-    st.html = memoEditorHtml(ed);
-    ed.classList.toggle('is-empty', !dayPaperHasVisibleContent(st.html));
+    st.draft = dayPlainFromHtml(html);
+    st.html = html;
+    if (ed) ed.classList.toggle('is-empty', !daySectionHasContent(ed.innerHTML));
     dayPaperMeta(date);
     if (st.timer) clearTimeout(st.timer);
     st.timer = setTimeout(() => {
@@ -1178,8 +1223,15 @@
         : memoRichFromText(oldBodyText, oldBody, nextBodyText);
     });
     const html = dayPaperHtmlFromBodies(nextBodies);
-    const ed = document.getElementById(dayPaperEditorId(date));
-    if (ed) memoSetEditor(ed, html);
+    DAY_SECTIONS.forEach((section) => {
+      const ed = dayPaperSectionEditor(date, section.key);
+      if (!ed) return;
+      const body = nextBodies[section.key] || '';
+      ed.innerHTML = sanitizeMemoHtml(daySectionHasContent(body) ? body : '<div><br></div>');
+      decorateDayPaperSections(ed);
+      hydrateFlowFigures(ed);
+      ed.classList.toggle('is-empty', !daySectionHasContent(body));
+    });
     st.draft = dayPlainFromHtml(html);
     st.html = html;
     st.dirty = true;
@@ -1194,6 +1246,7 @@
         const key = dayPaperKey(date);
         const st = richDocState(key);
         const html = dayPaperNormalizeHtml(st.html != null ? st.html : dayPaperHtmlNow(date));
+        const bodies = daySectionBodiesFromHtml(html);
         const empty = !dayPaperHasVisibleContent(html);
         const d = Core.parseDate(date);
         return '<section class="card agenda-card' + (i === 0 ? ' is-today' : '') + '">' +
@@ -1202,11 +1255,13 @@
             '<span class="hint tight" id="daypaper-state-' + date + '">' + esc(dayPaperStamp(date)) + '</span></div>' +
           '<div class="memo-editor-shell day-paper-shell">' +
             richToolbarHTML(dayPaperToolbarId(date)) +
-            '<div id="' + dayPaperEditorId(date) + '" class="memo-editor day-paper-editor' +
-              (empty ? ' is-empty' : '') + '" contenteditable="true" role="textbox" aria-multiline="true" ' +
-              'spellcheck="false" data-doc-key="' + esc(key) + '" ' +
-              'data-placeholder="' + esc(i === 0 ? '今天要做什么？' : '这一天先留白，想到再写…') + '">' +
-              html + '</div>' +
+            '<div id="' + dayPaperEditorId(date) + '" class="memo-editor day-paper-editor day-paper-stack' +
+              (empty ? ' is-empty' : '') + '" role="group" ' +
+              'spellcheck="false" data-doc-key="' + esc(key) + '" data-day-date="' + date + '">' +
+              DAY_SECTIONS.map((section) =>
+                dayPaperSectionEditorHtml(date, section, bodies[section.key])
+              ).join('') +
+            '</div>' +
           '</div>' +
           '<div class="timer-add day-timer-add">' +
             '<span class="timer-add-label">' + Core.TIMER_MARK + ' 提醒</span>' +
@@ -2601,14 +2656,19 @@
     } catch (err) { /* 老浏览器不支持某个命令时保持原文，不要报错 */ }
     rememberRichSelection(ed);
   }
-  function bindRichToolbar(toolbar, ed, onChange) {
-    if (!toolbar || !ed) return;
+  function bindRichToolbar(toolbar, editorOrGetter, onChange) {
+    if (!toolbar) return;
+    const getEditor = typeof editorOrGetter === 'function'
+      ? editorOrGetter
+      : () => editorOrGetter;
     toolbar.addEventListener('mousedown', (e) => {
       if (e.target.closest('button[data-memo-cmd]')) e.preventDefault();
     });
     toolbar.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-memo-cmd]');
       if (!btn) return;
+      const ed = getEditor();
+      if (!ed) return;
       if (btn.dataset.memoCmd === 'table') {
         openTablePicker(btn, ed);
         return;
@@ -2624,6 +2684,8 @@
     toolbar.querySelectorAll('select[data-memo-select]').forEach((sel) => {
       sel.addEventListener('change', () => {
         if (!sel.value) return;
+        const ed = getEditor();
+        if (!ed) return;
         applyRichCommand(ed, sel.dataset.memoSelect, sel.value);
         sel.value = '';
         onChange();
@@ -3842,9 +3904,9 @@
     }
     if (current === 'agenda') {
       const ae = document.activeElement;
-      const key = ae && ae.dataset ? String(ae.dataset.docKey || '') : '';
-      if (key.indexOf('day:') === 0) {
-        flushDayPaper(key.slice(4));
+      const host = ae && ae.closest ? ae.closest('.day-paper-editor[data-day-date]') : null;
+      if (host && host.dataset.dayDate) {
+        flushDayPaper(host.dataset.dayDate);
         $('#subline').textContent = statusText();
         return;
       }
@@ -4610,19 +4672,33 @@
     }
     if (current === 'agenda') {
       calendarNearDates(7).forEach((date) => {
-        const ed = document.getElementById(dayPaperEditorId(date));
-        if (!ed) return;
-        ed.addEventListener('input', () => dayPaperOnInput(date, ed));
-        ed.addEventListener('blur', () => {
-          flushDayPaper(date);
-          dayPaperMeta(date);
+        const outer = document.getElementById(dayPaperEditorId(date));
+        if (!outer) return;
+        DAY_SECTIONS.forEach((section) => {
+          const ed = dayPaperSectionEditor(date, section.key);
+          if (!ed) return;
+          const activate = () => { DAY_PAPER_ACTIVE[date] = ed; };
+          ed.addEventListener('focus', activate);
+          ed.addEventListener('pointerdown', activate);
+          ed.addEventListener('input', () => dayPaperOnInput(date, ed));
+          ed.addEventListener('blur', () => {
+            flushDayPaper(date);
+            dayPaperMeta(date);
+          });
+          bindRichPaste(ed);
+          bindRichKeydown(ed);
+          bindRichUndo(ed);
+          ed.addEventListener('keyup', rememberMemoSelection);
+          ed.addEventListener('mouseup', rememberMemoSelection);
         });
-        bindRichPaste(ed);
-        bindRichKeydown(ed);
-        bindRichUndo(ed);
-        ed.addEventListener('keyup', rememberMemoSelection);
-        ed.addEventListener('mouseup', rememberMemoSelection);
-        bindRichToolbar(document.getElementById(dayPaperToolbarId(date)), ed, () => dayPaperOnInput(date, ed));
+        bindRichToolbar(
+          document.getElementById(dayPaperToolbarId(date)),
+          () => dayPaperActiveEditor(date),
+          () => {
+            const ed = dayPaperActiveEditor(date);
+            if (ed) dayPaperOnInput(date, ed);
+          }
+        );
       });
     }
     const autoGrow = (el) => {
@@ -4800,11 +4876,32 @@
         const date = act.dataset.date;
         const due = (document.querySelector('[data-day-timer-date="' + date + '"]') || {}).value;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(due || '')) { toast('先选一个提醒日期'); return; }
-        const ed = document.getElementById(dayPaperEditorId(date));
-        const text = ed ? memoEditorPlain(ed) : dayPaperTextNow(date);
-        const line = ed ? memoCaretLine(ed) : Math.max(0, text.split('\n').length - 1);
-        applyDayPaperText(date, Core.setLineTimer(text, line, due));
-        toast('已给第 ' + (line + 1) + ' 行加提醒 · ' + Core.fmtLeft(Core.dayDiff(today(), due)));
+        const hasSectionEditors = DAY_SECTIONS.some((section) => {
+          const ed = dayPaperSectionEditor(date, section.key);
+          return !!(ed && ed.isConnected);
+        });
+        const fullText = hasSectionEditors
+          ? dayPlainFromHtml(dayPaperEditorHtml(date))
+          : dayPaperTextNow(date);
+        const bodies = daySectionBodiesFromText(fullText);
+        const active = dayPaperActiveEditor(date);
+        const sectionKey = active && daySectionByKey(active.dataset.daySectionEditor)
+          ? active.dataset.daySectionEditor
+          : DAY_SECTIONS[0].key;
+        const sectionText = active && active.isConnected
+          ? memoEditorPlain(active)
+          : (bodies[sectionKey] || '');
+        const line = active && active.isConnected
+          ? memoCaretLine(active)
+          : Math.max(0, sectionText.split('\n').length - 1);
+        bodies[sectionKey] = Core.setLineTimer(sectionText, line, due);
+        const nextText = DAY_SECTIONS
+          .map((section) => section.label + '\n' + (bodies[section.key] || ''))
+          .join('\n');
+        applyDayPaperText(date, nextText);
+        const section = daySectionByKey(sectionKey);
+        toast('已给「' + (section ? section.label : '工作') + '」第 ' + (line + 1) +
+          ' 行加提醒 · ' + Core.fmtLeft(Core.dayDiff(today(), due)));
         return;
       }
       if (action === 'doc-timer-add') {

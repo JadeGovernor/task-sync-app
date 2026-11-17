@@ -558,6 +558,20 @@ input:focus, select:focus { outline: 2px solid rgba(99,102,241,.35); border-colo
 .day-paper-editor [data-day-section="life"] [data-day-section-title] { color: #15803d; }
 .day-paper-editor [data-day-section="life"] [data-day-section-title]:before { background: #22c55e; }
 .day-paper-editor [data-day-section-body] { min-height: 25px; }
+.day-paper-editor .day-paper-section-editor {
+  position: relative;
+  min-height: 25px;
+  padding: 0;
+  background: transparent;
+  line-height: 1.7;
+}
+.day-paper-editor .day-paper-section-editor.is-empty:before {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+.day-paper-editor .day-paper-section-editor:focus { outline: none; }
 .day-paper-editor.is-empty:before { display: none; }
 .memo-editor table {
   width: 100%; margin: 8px 0 12px; border-collapse: collapse;

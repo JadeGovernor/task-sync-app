@@ -1067,8 +1067,32 @@
       daySectionShellHtml(section.key, bodies && bodies[section.key])
     ).join('');
   }
+  const ROLLOVER_HTML_START = '<div><b data-rollover="1">';
+  function collapseDuplicateRolloverBody(bodyHtml) {
+    const html = String(bodyHtml || '');
+    const first = html.indexOf(ROLLOVER_HTML_START);
+    if (first < 0) return html;
+    const starts = [];
+    let at = first;
+    while (at >= 0) {
+      starts.push(at);
+      at = html.indexOf(ROLLOVER_HTML_START, at + ROLLOVER_HTML_START.length);
+    }
+    if (starts.length < 2) return html;
+    const prefix = html.slice(0, first);
+    const units = starts.map((start, i) =>
+      html.slice(start, i + 1 < starts.length ? starts[i + 1] : html.length)
+        .replace(/(?:<div><br><\/div>)+$/g, '')
+    );
+    if (!units.every((unit) => unit === units[0])) return html;
+    return prefix + units[0];
+  }
   function dayPaperNormalizeHtml(html) {
-    return dayPaperHtmlFromBodies(daySectionBodiesFromHtml(html));
+    const bodies = daySectionBodiesFromHtml(html);
+    DAY_SECTION_KEYS.forEach((key) => {
+      bodies[key] = collapseDuplicateRolloverBody(bodies[key] || '');
+    });
+    return dayPaperHtmlFromBodies(bodies);
   }
   function dayPaperHasVisibleContent(html) {
     const bodies = daySectionBodiesFromHtml(html);
@@ -1282,8 +1306,32 @@
     return '<div><b class="day-rollover-mark" data-rollover="1">' + esc(label) + '</b></div>' +
       sanitizeMemoHtml(html);
   }
+  function repairDuplicateRolloverPapers() {
+    dayPapers().forEach((item) => {
+      const rawHtml = dayPaperRawHtmlForItem(item);
+      const bodies = daySectionBodiesFromHtml(rawHtml);
+      let duplicated = false;
+      DAY_SECTION_KEYS.forEach((key) => {
+        const body = bodies[key] || '';
+        const clean = collapseDuplicateRolloverBody(body);
+        if (clean !== body) {
+          duplicated = true;
+          bodies[key] = clean;
+        }
+      });
+      if (!duplicated) return;
+      const cleanHtml = dayPaperHtmlFromBodies(bodies);
+      const cleanText = dayPlainFromHtml(cleanHtml);
+      store.saveTask(Object.assign({}, item, {
+        memo: cleanText,
+        memoHtml: cleanHtml || memoTextToHtml(cleanText),
+        updatedAt: new Date().toISOString()
+      }));
+    });
+  }
   function rollDayPapers() {
     if (dayRolloverRunning) return;
+    repairDuplicateRolloverPapers();
     const d = today();
     const yesterday = Core.shiftDate(d, -1);
     const yesterdayCopies = dayPapers().filter((p) => p.date === yesterday);
@@ -1296,6 +1344,34 @@
     const sourceBodies = daySectionBodiesFromHtml(sourceHtml);
     const target = dayPaperFor(d);
     const targetHtml = target ? dayPaperNormalizeHtml(dayPaperRawHtmlForItem(target)) : '';
+    const alreadyRolled = target && (
+      (Array.isArray(target.rolledFrom) && target.rolledFrom.indexOf(yesterday) >= 0) ||
+      String(target.memoHtml || '').indexOf('data-rollover="1"') >= 0
+    );
+    if (alreadyRolled) {
+      /* 旧设备可能把昨天的正文又推回来。今天已经有迁移标记时只清源，不再追加，
+       * 否则每次同步都会把同一份内容再复制一遍，最后把日程页拖到卡死。
+       * 顺便把历史版本已经复制出来的重复块收敛成一份。 */
+      const cleanHtml = dayPaperNormalizeHtml(dayPaperRawHtmlForItem(target));
+      const cleanText = dayPlainFromHtml(cleanHtml);
+      if (cleanText !== (target.memo || '') || cleanHtml !== (target.memoHtml || '')) {
+        store.saveTask(Object.assign({}, target, {
+          memo: cleanText,
+          memoHtml: cleanHtml || memoTextToHtml(cleanText),
+          updatedAt: new Date().toISOString()
+        }));
+      }
+      yesterdayCopies.filter(dayPaperHasText).forEach((p) => {
+        store.saveTask(Object.assign({}, p, {
+          memo: '',
+          memoHtml: '',
+          rolledTo: d,
+          rolledAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }));
+      });
+      return;
+    }
     const targetBodies = daySectionBodiesFromHtml(targetHtml);
     const mergedBodies = {};
     DAY_SECTIONS.forEach((section) => {
@@ -1313,15 +1389,7 @@
     const mergedText = dayPlainFromHtml(mergedHtml);
     dayRolloverRunning = true;
     try {
-      yesterdayCopies.forEach((p) => {
-        store.saveTask(Object.assign({}, p, {
-          memo: '',
-          memoHtml: '',
-          rolledTo: d,
-          rolledAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }));
-      });
+      /* 先写今天，再清昨天。即使清源失败，rolledFrom / 迁移标题也能阻止下一次重复追加。 */
       const base = target || Core.newItem({ kind: DAY_PAPER_KIND, date: d, title: '日程 ' + d });
       store.saveTask(Object.assign({}, base, {
         kind: DAY_PAPER_KIND,
@@ -1331,6 +1399,15 @@
         rolledFrom: Array.from(new Set([].concat(target && target.rolledFrom || [], [yesterday]))),
         updatedAt: new Date().toISOString()
       }));
+      yesterdayCopies.forEach((p) => {
+        store.saveTask(Object.assign({}, p, {
+          memo: '',
+          memoHtml: '',
+          rolledTo: d,
+          rolledAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }));
+      });
       toast('已把昨天剩余日程按工作 / 事业 / 生活滚到今天');
     } finally {
       dayRolloverRunning = false;

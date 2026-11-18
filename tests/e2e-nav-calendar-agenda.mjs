@@ -377,6 +377,25 @@ ok('5f2 同日期的旧副本也清空，已删除内容不会复活',
   !/已删除的旧副本/.test(todayPaper.text), staleDay);
 const oldThreeDay = await remoteOne('day-old3');
 ok('5f3 三天前的日程不会跟着迁移', oldThreeDay && oldThreeDay.memo === '三天前未完成', oldThreeDay);
+await ev(`(() => {
+  const all = window.__mock.files()['tasks.json'];
+  const src = all.find((x) => x.id === 'day-y');
+  src.memo = ${JSON.stringify(yesterdayMemo)};
+  src.memoHtml = ${JSON.stringify(yesterdayHtml)};
+  delete src.rolledTo;
+  window.__mock.setRemote('tasks.json', all);
+  return 1;
+})()`);
+await load(URL_);
+await wait(1800);
+await go('action', 'agenda');
+await waitFor(`!!document.getElementById('daypaper-${dates.t}')`);
+const idempotentToday = await remoteOne('day-today');
+const idempotentText = idempotentToday ? String(idempotentToday.memo || '') : '';
+const idempotentMarks = (idempotentText.match(/昨天剩下内容：/g) || []).length;
+ok('5f4 旧设备把昨天正文推回来，也不会再次重复迁移',
+  idempotentMarks === 3 && (idempotentText.match(/昨天工作的日程/g) || []).length === 1,
+  { marks: idempotentMarks, text: idempotentText });
 await ev(`(() => { const ed = document.getElementById('daypaper-${dates.t}-work');
   ed.innerHTML += '<div>今天的新日程</div>'; ed.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`);
 await wait(1300);

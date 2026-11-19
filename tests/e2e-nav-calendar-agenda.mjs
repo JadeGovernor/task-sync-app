@@ -396,6 +396,33 @@ const idempotentMarks = (idempotentText.match(/昨天剩下内容：/g) || []).l
 ok('5f4 旧设备把昨天正文推回来，也不会再次重复迁移',
   idempotentMarks === 3 && (idempotentText.match(/昨天工作的日程/g) || []).length === 1,
   { marks: idempotentMarks, text: idempotentText });
+await ev(`(() => {
+  const all = window.__mock.files()['tasks.json'];
+  const src = all.find((x) => x.id === 'day-y');
+  const box = document.createElement('div');
+  box.innerHTML = src.memoHtml;
+  const body = box.querySelector('[data-day-section="work"] [data-day-section-body]');
+  body.insertAdjacentHTML('beforeend', '<div>迁移后新增工作</div>');
+  src.memo = '工作\\n昨天工作的日程\\n迁移后新增工作\\n事业\\n昨天事业的日程\\n生活\\n昨天生活的日程';
+  src.memoHtml = box.innerHTML;
+  src.updatedAt = new Date().toISOString();
+  window.__mock.setRemote('tasks.json', all);
+  return 1;
+})()`);
+await load(URL_);
+await wait(1800);
+await go('action', 'agenda');
+await waitFor(`!!document.getElementById('daypaper-${dates.t}')`);
+const incrementalToday = await remoteOne('day-today');
+const incrementalText = incrementalToday ? String(incrementalToday.memo || '') : '';
+const incrementalSource = await remoteOne('day-y');
+ok('5f5 迁移后新写的昨天条目会增量补到今天，且旧内容不重复',
+  (incrementalText.match(/迁移后新增工作/g) || []).length === 1 &&
+  (incrementalText.match(/昨天工作的日程/g) || []).length === 1 &&
+  incrementalSource && !String(incrementalSource.memo || '').trim(),
+  { today: incrementalText, source: incrementalSource });
+const expectedRollMarks = ((incrementalToday && incrementalToday.memoHtml) || '')
+  .match(/data-rollover="1"/g) || [];
 await ev(`(() => { const ed = document.getElementById('daypaper-${dates.t}-work');
   ed.innerHTML += '<div>今天的新日程</div>'; ed.dispatchEvent(new Event('input', { bubbles: true })); return 1; })()`);
 await wait(1300);
@@ -533,7 +560,8 @@ ok('8c 刷新后日历记录仍在', (await remoteTasks()).filter((x) => x.kind 
 const todayAfterReload = (await remoteTasks()).find((x) => x.kind === 'daypaper' && x.date === dates.t);
 const rollMarksAfterReload = ((todayAfterReload && todayAfterReload.memoHtml) || '')
   .match(/data-rollover="1"/g) || [];
-ok('8e 刷新后不会重复迁移同一批内容', rollMarksAfterReload.length === 3, rollMarksAfterReload.length);
+ok('8e 刷新后不会重复迁移同一批内容',
+  rollMarksAfterReload.length === expectedRollMarks.length, rollMarksAfterReload.length);
 ok('8d 全程无 JS 报错', errors.length === 0, errors.slice(0, 3));
 
 dump();

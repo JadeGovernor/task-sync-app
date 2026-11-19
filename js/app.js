@@ -1087,6 +1087,22 @@
     if (!units.every((unit) => unit === units[0])) return html;
     return prefix + units[0];
   }
+  function unrepresentedRolloverHtml(bodyHtml, targetText) {
+    const box = document.createElement('div');
+    box.innerHTML = sanitizeMemoHtml(bodyHtml || '');
+    const keep = [];
+    Array.from(box.childNodes).forEach((node) => {
+      if (node.nodeType === 3) {
+        const text = normalizeMemoPlain(node.nodeValue || '').trim();
+        if (text && targetText.indexOf(text) < 0) keep.push(esc(text));
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      const text = normalizeMemoPlain(dayPlainFromHtml(node.outerHTML)).trim();
+      if (text && targetText.indexOf(text) < 0) keep.push(node.outerHTML);
+    });
+    return keep.join('');
+  }
   function dayPaperNormalizeHtml(html) {
     const bodies = daySectionBodiesFromHtml(html);
     DAY_SECTION_KEYS.forEach((key) => {
@@ -1349,27 +1365,48 @@
       String(target.memoHtml || '').indexOf('data-rollover="1"') >= 0
     );
     if (alreadyRolled) {
-      /* 旧设备可能把昨天的正文又推回来。今天已经有迁移标记时只清源，不再追加，
-       * 否则每次同步都会把同一份内容再复制一遍，最后把日程页拖到卡死。
-       * 顺便把历史版本已经复制出来的重复块收敛成一份。 */
+      /* 已经迁移过时，只补昨天后来新增、今天还没有的内容。
+       * 如果旧设备把同一份正文反复推回来，今天已经包含就不再写任何一边，
+       * 否则两台设备会一个补、一个清，形成每 2 秒提交一次的同步死循环。 */
       const cleanHtml = dayPaperNormalizeHtml(dayPaperRawHtmlForItem(target));
-      const cleanText = dayPlainFromHtml(cleanHtml);
-      if (cleanText !== (target.memo || '') || cleanHtml !== (target.memoHtml || '')) {
-        store.saveTask(Object.assign({}, target, {
-          memo: cleanText,
-          memoHtml: cleanHtml || memoTextToHtml(cleanText),
-          updatedAt: new Date().toISOString()
-        }));
-      }
+      const targetBodies = daySectionBodiesFromHtml(cleanHtml);
+      let changed = false;
       yesterdayCopies.filter(dayPaperHasText).forEach((p) => {
-        store.saveTask(Object.assign({}, p, {
-          memo: '',
-          memoHtml: '',
-          rolledTo: d,
-          rolledAt: new Date().toISOString(),
+        const sourceBodies = daySectionBodiesFromHtml(dayPaperNormalizeHtml(dayPaperRawHtmlForItem(p)));
+        DAY_SECTIONS.forEach((section) => {
+          const sourceBody = sourceBodies[section.key] || '';
+          if (!daySectionHasContent(sourceBody)) return;
+          const sourceText = normalizeMemoPlain(dayPlainFromHtml(sourceBody)).trim();
+          const targetText = normalizeMemoPlain(dayPlainFromHtml(targetBodies[section.key] || '')).trim();
+          if (!sourceText || targetText.indexOf(sourceText) >= 0) return;
+          const newHtml = unrepresentedRolloverHtml(sourceBody, targetText);
+          if (!newHtml) return;
+          const rolled = prependRolloverLabel(newHtml, '昨天剩下内容：');
+          targetBodies[section.key] = daySectionHasContent(targetBodies[section.key])
+            ? targetBodies[section.key] + '<div><br></div><div><br></div>' + rolled
+            : rolled;
+          changed = true;
+        });
+      });
+      if (changed) {
+        const mergedHtml = dayPaperHtmlFromBodies(targetBodies);
+        const mergedText = dayPlainFromHtml(mergedHtml);
+        store.saveTask(Object.assign({}, target, {
+          memo: mergedText,
+          memoHtml: mergedHtml || memoTextToHtml(mergedText),
+          rolledFrom: Array.from(new Set([].concat(target.rolledFrom || [], [yesterday]))),
           updatedAt: new Date().toISOString()
         }));
-      });
+        yesterdayCopies.filter(dayPaperHasText).forEach((p) => {
+          store.saveTask(Object.assign({}, p, {
+            memo: '',
+            memoHtml: '',
+            rolledTo: d,
+            rolledAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }));
+        });
+      }
       return;
     }
     const targetBodies = daySectionBodiesFromHtml(targetHtml);
@@ -5254,6 +5291,23 @@
     if (document.visibilityState === 'visible') refreshMonthIfDayChanged();
   });
   setInterval(refreshMonthIfDayChanged, 60000);
+  let midnightTimer = null;
+  function scheduleMidnightRollover() {
+    if (midnightTimer) clearTimeout(midnightTimer);
+    const now = new Date();
+    const next = new Date(now);
+    next.setHours(24, 0, 3, 0);   // 本地时间 00:00:03，给日期切换留 3 秒余量
+    midnightTimer = setTimeout(() => {
+      flushMemo();
+      flushMonth();
+      flushAllRichDocs();
+      Promise.resolve(store.refresh(false)).catch(() => {}).then(() => {
+        queueDayRollover();
+        scheduleMidnightRollover();
+      });
+    }, Math.max(1000, next.getTime() - now.getTime()));
+  }
+  scheduleMidnightRollover();
   window.addEventListener('pagehide', () => { flushMemo(); flushMonth(); flushAllRichDocs(); });
   bindFmtBubble();
   bindFlowEditor();

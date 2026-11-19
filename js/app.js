@@ -568,18 +568,23 @@
 
   /* ---------- 本月排期：一张不交互的月历 + 四行可编辑的周排期 ---------- */
   const p2 = (n) => (n < 10 ? '0' + n : String(n));
-  function monthMeta() {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = d.getMonth();
+  function monthMetaFromKey(key) {
+    const parts = String(key || '').split('-');
+    const y = Number(parts[0]);
+    const m = Number(parts[1]) - 1;
+    if (!y || !(m >= 0 && m < 12)) return monthMetaFromKey((new Date()).getFullYear() + '-' + p2(new Date().getMonth() + 1));
     const days = new Date(y, m + 1, 0).getDate();
-    const key = y + '-' + p2(m + 1);
+    const monthKey = y + '-' + p2(m + 1);
     return {
-      y, m, days, key,
-      first: key + '-01',
-      last: key + '-' + p2(days),
+      y, m, days, key: monthKey,
+      first: monthKey + '-01',
+      last: monthKey + '-' + p2(days),
       label: y + ' 年 ' + (m + 1) + ' 月'
     };
+  }
+  function monthMeta() {
+    const d = new Date();
+    return monthMetaFromKey(d.getFullYear() + '-' + p2(d.getMonth() + 1));
   }
   const shortDay = (s) => {
     const p = String(s || '').split('-');
@@ -598,15 +603,18 @@
       return { start, end, text: '' };
     });
   };
+  const monthItemForKey = (monthKey, i) => {
+    return items().find((t) => t.kind === MONTH_KIND && t.month === monthKey && t.week === i) || null;
+  };
   const monthItem = (i) => {
     const key = monthMeta().key;
-    return items().find((t) => t.kind === MONTH_KIND && t.month === key && t.week === i) || null;
+    return monthItemForKey(key, i);
   };
-  function monthWeeks() {
-    const meta = monthMeta();
+  function monthWeeksForKey(monthKey) {
+    const meta = monthMetaFromKey(monthKey);
     const def = defaultMonthWeeks(meta);
     return def.map((d, i) => {
-      const w = monthItem(i) || {};
+      const w = monthItemForKey(monthKey, i) || {};
       const good = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
       return {
         start: good(w.start) ? w.start : d.start,
@@ -615,10 +623,13 @@
       };
     });
   }
-  function saveMonthWeek(i, patch) {
-    const meta = monthMeta();
+  function monthWeeks() {
+    return monthWeeksForKey(monthMeta().key);
+  }
+  function saveMonthWeek(i, patch, monthKey) {
+    const meta = monthMetaFromKey(monthKey || monthMeta().key);
     const def = defaultMonthWeeks(meta)[i];
-    const old = monthItem(i);
+    const old = monthItemForKey(meta.key, i);
     const base = old || Core.newItem({
       kind: MONTH_KIND,
       title: meta.label + WEEK_NAMES[i],
@@ -637,9 +648,9 @@
   }
   function flushMonth() {
     if (!monthState.dirty) return;
-    const meta = monthMeta();
-    if (monthState.key !== meta.key) { monthState.drafts = {}; monthState.dirty = false; return; }
-    const weeks = monthWeeks();
+    const key = monthState.key;
+    if (!key) { monthState.drafts = {}; monthState.dirty = false; return; }
+    const weeks = monthWeeksForKey(key);
     const changes = Object.keys(monthState.drafts)
       .map(Number)
       .filter((i) => i >= 0 && i < 4)
@@ -649,7 +660,7 @@
     monthState.flushing = true;
     try {
       changes.forEach((c) => {
-        if (c.text !== c.prev) saveMonthWeek(c.i, { text: c.text });
+        if (c.text !== c.prev) saveMonthWeek(c.i, { text: c.text }, key);
       });
     } finally { monthState.flushing = false; }
   }
@@ -1457,6 +1468,85 @@
       dayRolloverQueued = false;
       rollDayPapers();
     }, 120);
+  }
+  let monthRolloverRunning = false;
+  let monthRolloverQueued = false;
+  function rollMonthPlans() {
+    if (monthRolloverRunning) return;
+    const meta = monthMeta();
+    const prevDate = new Date(meta.y, meta.m, 0);   // 上个月最后一天
+    const prevKey = prevDate.getFullYear() + '-' + p2(prevDate.getMonth() + 1);
+    const prevWeeks = monthWeeksForKey(prevKey);
+    const remaining = prevWeeks
+      .map((w, i) => ({ i, ...w }))
+      .filter((w) => String(w.text || '').trim());
+    if (!remaining.length) return;
+    const target = monthItemForKey(meta.key, 0);
+    const marker = '上月剩下内容：';
+    const alreadyRolled = target && (
+      (Array.isArray(target.rolledFrom) && target.rolledFrom.indexOf(prevKey) >= 0) ||
+      String(target.text || '').indexOf(marker) >= 0
+    );
+    let targetText = target ? String(target.text || '') : '';
+    let changed = false;
+    if (alreadyRolled) {
+      remaining.forEach((w) => {
+        const text = String(w.text || '').trim();
+        if (!text || targetText.indexOf(text) >= 0) return;
+        const block = marker + '\n' + WEEK_NAMES[w.i] + '（' + rangeLabel(w) + '）\n' + text;
+        targetText = targetText ? targetText + '\n\n' + block : block;
+        changed = true;
+      });
+    } else {
+      const block = marker + '\n' + remaining
+        .map((w) => WEEK_NAMES[w.i] + '（' + rangeLabel(w) + '）\n' + String(w.text || '').trim())
+        .join('\n\n');
+      targetText = targetText ? targetText + '\n\n' + block : block;
+      changed = true;
+    }
+    if (!changed) return;   // 旧设备把同一份排期反复推回来时不再写，避免同步死循环
+    const def = defaultMonthWeeks(meta)[0];
+    const base = target || Core.newItem({
+      kind: MONTH_KIND,
+      title: meta.label + WEEK_NAMES[0],
+      month: meta.key,
+      week: 0,
+      start: def.start,
+      end: def.end,
+      text: ''
+    });
+    monthRolloverRunning = true;
+    try {
+      store.saveTask(Object.assign({}, base, {
+        kind: MONTH_KIND,
+        month: meta.key,
+        week: 0,
+        text: targetText,
+        rolledFrom: Array.from(new Set([].concat(target && target.rolledFrom || [], [prevKey]))),
+        updatedAt: new Date().toISOString()
+      }));
+      WEEK_NAMES.forEach((_, i) => {
+        const src = monthItemForKey(prevKey, i);
+        if (!src || !String(src.text || '').trim()) return;
+        store.saveTask(Object.assign({}, src, {
+          text: '',
+          rolledTo: meta.key,
+          rolledAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }));
+      });
+      toast('上月排期已自动延续到本月第一周');
+    } finally {
+      monthRolloverRunning = false;
+    }
+  }
+  function queueMonthRollover() {
+    if (monthRolloverQueued) return;
+    monthRolloverQueued = true;
+    setTimeout(() => {
+      monthRolloverQueued = false;
+      rollMonthPlans();
+    }, 160);
   }
 
   /* ---------- 计划底稿 + 周报：都能直接写富文本，按任务条目同步 ---------- */
@@ -5269,6 +5359,7 @@
   store.onChange = () => {
     render();
     queueDayRollover();
+    queueMonthRollover();
   };
   /* 切走 / 息屏 / 关页面之前，把备忘录里没落盘的字存下来 */
   document.addEventListener('visibilitychange', () => {
@@ -5283,6 +5374,7 @@
     flushMonth();
     flushAllRichDocs();
     queueDayRollover();
+    queueMonthRollover();
     if (!['month', 'agenda', 'today', 'calendar', 'disc', 'loop'].includes(current)) return;
     monthState.rangeEdit = null;
     render();
@@ -5303,6 +5395,7 @@
       flushAllRichDocs();
       Promise.resolve(store.refresh(false)).catch(() => {}).then(() => {
         queueDayRollover();
+        queueMonthRollover();
         scheduleMidnightRollover();
       });
     }, Math.max(1000, next.getTime() - now.getTime()));
@@ -5314,6 +5407,7 @@
   render();
   store.init();
   queueDayRollover();
+  queueMonthRollover();
   if ('serviceWorker' in navigator) {
     const hadController = !!navigator.serviceWorker.controller;
     let reloadingForUpdate = false;

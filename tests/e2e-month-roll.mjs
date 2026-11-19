@@ -148,6 +148,14 @@ const okFirst = first.curText.includes('新月自带任务') &&
   first.curText.includes('上月剩下内容：') &&
   ['上月第一周任务', '上月第二周任务', '上月第三周任务', '上月第四周任务'].every((x) => first.curText.includes(x)) &&
   first.prev.every((x) => !String(x.text || '').trim() && x.rolledTo === keys.cur);
+await ev(`document.querySelector('.tab[data-tab="month"]').click()`);
+await wait(450);
+const monthUi = await ev(`(() => {
+  const el = document.querySelector('[data-ms-week="0"]');
+  return el ? el.value : '';
+})()`);
+const okUi = monthUi.includes('上月剩下内容：') &&
+  ['上月第一周任务', '上月第二周任务', '上月第三周任务', '上月第四周任务'].every((x) => monthUi.includes(x));
 
 const stale = await ev(`(() => {
   const st = window.__mock.stats();
@@ -170,5 +178,6 @@ const okSecond = (second.curText.match(/上月第一周任务/g) || []).length =
   (second.curText.match(/上月第四周任务/g) || []).length === 1 &&
   second.puts === putsBefore;
 
-console.log((okFirst && okSecond ? 'PASS' : 'FAIL') + ' 排期跨月延续 ' + JSON.stringify({ first, second, putsBefore, stale }));
-process.exit(okFirst && okSecond ? 0 : 1);
+console.log((okFirst && okUi && okSecond ? 'PASS' : 'FAIL') + ' 排期跨月延续 ' +
+  JSON.stringify({ first, monthUi, second, putsBefore, stale }));
+process.exit(okFirst && okUi && okSecond ? 0 : 1);

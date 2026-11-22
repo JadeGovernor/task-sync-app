@@ -5355,11 +5355,18 @@
   $('#modal-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeItemModal(); });
   $('#note-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeNote(); });
 
-  store.onStatus = (st) => { lastStatus = st; $('#subline').textContent = statusText(); };
+  store.onStatus = (st) => {
+    lastStatus = st;
+    $('#subline').textContent = statusText();
+    if (st.state === 'ok' && rolloverRetryPending && store.lastSyncedAt &&
+        Date.now() - store.lastSyncedAt < 15000) {
+      rolloverRetryPending = false;
+      queueDayRollover();
+      queueMonthRollover();
+    }
+  };
   store.onChange = () => {
     render();
-    queueDayRollover();
-    queueMonthRollover();
   };
   /* 切走 / 息屏 / 关页面之前，把备忘录里没落盘的字存下来 */
   document.addEventListener('visibilitychange', () => {
@@ -5367,14 +5374,29 @@
   });
   /* 跨零点 / 回到前台时，让日历上的「今天」和月份自己走到新的一天 */
   let monthDayStamp = today();
+  let rolloverSyncSeq = 0;
+  let rolloverRetryPending = false;
+  function queueRolloverAfterFreshSync(waitInitial) {
+    if (!store.token) { rolloverRetryPending = true; return; }
+    rolloverRetryPending = true;
+    const seq = ++rolloverSyncSeq;
+    const ready = waitInitial
+      ? Promise.resolve(store.whenReady())
+      : Promise.resolve(store.refresh(true)).then(() => true).catch(() => false);
+    ready.then((ok) => {
+      if (seq !== rolloverSyncSeq || ok === false) return;
+      rolloverRetryPending = false;
+      queueDayRollover();
+      queueMonthRollover();
+    });
+  }
   const refreshMonthIfDayChanged = () => {
     if (today() === monthDayStamp) return;
     monthDayStamp = today();
     flushMemo();
     flushMonth();
     flushAllRichDocs();
-    queueDayRollover();
-    queueMonthRollover();
+    queueRolloverAfterFreshSync(false);
     if (!['month', 'agenda', 'today', 'calendar', 'disc', 'loop'].includes(current)) return;
     monthState.rangeEdit = null;
     render();
@@ -5393,11 +5415,8 @@
       flushMemo();
       flushMonth();
       flushAllRichDocs();
-      Promise.resolve(store.refresh(false)).catch(() => {}).then(() => {
-        queueDayRollover();
-        queueMonthRollover();
-        scheduleMidnightRollover();
-      });
+      queueRolloverAfterFreshSync(false);
+      scheduleMidnightRollover();
     }, Math.max(1000, next.getTime() - now.getTime()));
   }
   scheduleMidnightRollover();
@@ -5406,8 +5425,7 @@
   bindFlowEditor();
   render();
   store.init();
-  queueDayRollover();
-  queueMonthRollover();
+  queueRolloverAfterFreshSync(true);
   if ('serviceWorker' in navigator) {
     const hadController = !!navigator.serviceWorker.controller;
     let reloadingForUpdate = false;

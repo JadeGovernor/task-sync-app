@@ -43,6 +43,8 @@
        * 请求飞行期间本地只要写过一次，这份快照就不能再用来覆盖本地。 */
       this._revs = { tasks: 0, checkins: 0, settings: 0 };
       this._flushing = null;   // 同一时刻只允许一次 flush，避免同一个操作被推两遍
+      this._ready = Promise.resolve(false);
+      this._syncedAt = 0;
     }
 
     _touch(file) { this._revs[file] = (this._revs[file] || 0) + 1; }
@@ -223,8 +225,12 @@
           if (saved[f] !== undefined) this.files[f].value = saved[f];
         });
       }
-      if (this.token) this.refresh(true);
-      else this.setStatus('idle', '请先在「设置」中连接 GitHub Token');
+      if (this.token) {
+        this._ready = this.refresh(true).then(() => true).catch(() => false);
+      } else {
+        this._ready = Promise.resolve(false);
+        this.setStatus('idle', '请先在「设置」中连接 GitHub Token');
+      }
       this._timer = setInterval(() => this._heartbeat(), 5000);
       if (typeof window !== 'undefined') {
         window.addEventListener('online', () => {
@@ -237,6 +243,9 @@
       }
       return this;
     }
+
+    whenReady() { return this._ready; }
+    get lastSyncedAt() { return this._syncedAt || 0; }
 
     async _heartbeat() {
       if (!this.token) return;
@@ -269,6 +278,7 @@
           if (before !== JSON.stringify(merged)) changed = true;
         }));
         this._persistState();
+        this._syncedAt = Date.now();
         this.setStatus('ok', '已同步', new Date());
         if (changed && this.onChange) this.onChange();
       } catch (err) {

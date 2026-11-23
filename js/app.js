@@ -1127,10 +1127,28 @@
    * 这样另一台旧设备即使把空白编辑器整张写回，也不会清掉刚写好的板块。 */
   function mergeDayPaperTask(remoteValue, op) {
     const incoming = op && op.task;
-    if (!incoming || incoming.kind !== 'daypaper') return null;
+    if (!incoming) return null;
+    const base = op.base || {};
+    if (['memo', 'idea', 'fun', 'monthnote', 'weekreport'].includes(incoming.kind)) {
+      const remote = (remoteValue || []).find((x) => x && x.id === incoming.id);
+      if (!remote) return incoming;
+      const unchanged = String(incoming.memo || '') === String(base.memo || '') &&
+        String(incoming.memoHtml || '') === String(base.memoHtml || '');
+      return unchanged ? Object.assign({}, incoming, {
+        memo: remote.memo || '',
+        memoHtml: remote.memoHtml || ''
+      }) : incoming;
+    }
+    if (incoming.kind === 'monthweek') {
+      const remote = (remoteValue || []).find((x) => x && x.id === incoming.id);
+      if (!remote) return incoming;
+      return String(incoming.text || '') === String(base.text || '')
+        ? Object.assign({}, incoming, { text: remote.text || '' })
+        : incoming;
+    }
+    if (incoming.kind !== 'daypaper') return null;
     const remote = (remoteValue || []).find((x) => x && x.id === incoming.id);
     if (!remote || remote.kind !== 'daypaper') return incoming;
-    const base = op.base || {};
     const remoteBodies = daySectionBodiesFromHtml(dayPaperNormalizeHtml(dayPaperRawHtmlForItem(remote)));
     const baseBodies = daySectionBodiesFromHtml(dayPaperNormalizeHtml(dayPaperRawHtmlForItem(base)));
     const incomingBodies = daySectionBodiesFromHtml(dayPaperNormalizeHtml(dayPaperRawHtmlForItem(incoming)));

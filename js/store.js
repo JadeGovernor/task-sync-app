@@ -419,14 +419,10 @@
     }
 
     saveTask(task) {
-      const prev = task.kind === 'daypaper'
-        ? (this.files.tasks.value || []).find((x) => x && x.id === task.id)
-        : null;
+      const prev = (this.files.tasks.value || []).find((x) => x && x.id === task.id);
       task.updatedAt = new Date().toISOString();
       const op = { file: 'tasks', type: 'task_set', task };
-      if (task.kind === 'daypaper') {
-        op.base = prev ? JSON.parse(JSON.stringify(prev)) : null;
-      }
+      op.base = prev ? JSON.parse(JSON.stringify(prev)) : null;
       return this._mutate(op);
     }
     deleteTask(id) {

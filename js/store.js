@@ -201,10 +201,17 @@
     }
 
     /* 把某个文件「还没上传成功」的本地操作，叠到任意一份基底值上 */
+    _applyOp(file, value, op) {
+      if (file === 'tasks' && op.type === 'task_set' && this.mergeTask && op.task) {
+        const merged = this.mergeTask(value, op);
+        if (merged) op = Object.assign({}, op, { task: merged });
+      }
+      return Core.applyOp(file, value, op);
+    }
     _materializeFrom(base, file) {
       let value = base;
       this._outboxFor(file).forEach((op) => {
-        const r = Core.applyOp(file, value, op);
+        const r = this._applyOp(file, value, op);
         value = r.value;
       });
       return value;
@@ -300,7 +307,7 @@
       let lastErr = null;
       for (let i = 0; i < tries; i++) {
         const remote = await this._fetchRemote(op.file);
-        const r = Core.applyOp(op.file, remote.value, op);
+        const r = this._applyOp(op.file, remote.value, op);
         if (!r.changed) {
           // 远端已包含该操作效果（例如另一台设备已提交），无需重复写
           rec.sha = remote.sha;
@@ -395,7 +402,7 @@
     /* 本地立刻应用一条操作并进入同步队列 */
     _mutate(op) {
       const rec = this.files[op.file];
-      const r = Core.applyOp(op.file, rec.value, op);
+      const r = this._applyOp(op.file, rec.value, op);
       if (!r.changed) return false;
       rec.value = r.value;
       rec.loaded = true;
@@ -412,8 +419,15 @@
     }
 
     saveTask(task) {
+      const prev = task.kind === 'daypaper'
+        ? (this.files.tasks.value || []).find((x) => x && x.id === task.id)
+        : null;
       task.updatedAt = new Date().toISOString();
-      return this._mutate({ file: 'tasks', type: 'task_set', task });
+      const op = { file: 'tasks', type: 'task_set', task };
+      if (task.kind === 'daypaper') {
+        op.base = prev ? JSON.parse(JSON.stringify(prev)) : null;
+      }
+      return this._mutate(op);
     }
     deleteTask(id) {
       this._recordHistory('tasks', this.files.tasks.value);   // 删之前留一份，误删可恢复

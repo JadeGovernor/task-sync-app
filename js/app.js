@@ -1121,6 +1121,38 @@
     });
     return dayPaperHtmlFromBodies(bodies);
   }
+  /* 日程按「工作 / 事业 / 生活」三方合并：
+   * base = 本机编辑前那一版，incoming = 本机刚保存的版本，remote = 云端当前版本。
+   * 本机没改的板块保留云端；本机改过的板块才用 incoming。
+   * 这样另一台旧设备即使把空白编辑器整张写回，也不会清掉刚写好的板块。 */
+  function mergeDayPaperTask(remoteValue, op) {
+    const incoming = op && op.task;
+    if (!incoming || incoming.kind !== 'daypaper') return null;
+    const remote = (remoteValue || []).find((x) => x && x.id === incoming.id);
+    if (!remote || remote.kind !== 'daypaper') return incoming;
+    const base = op.base || {};
+    const remoteBodies = daySectionBodiesFromHtml(dayPaperNormalizeHtml(dayPaperRawHtmlForItem(remote)));
+    const baseBodies = daySectionBodiesFromHtml(dayPaperNormalizeHtml(dayPaperRawHtmlForItem(base)));
+    const incomingBodies = daySectionBodiesFromHtml(dayPaperNormalizeHtml(dayPaperRawHtmlForItem(incoming)));
+    const plain = (html) => normalizeMemoPlain(dayPlainFromHtml(html));
+    const merged = {};
+    DAY_SECTIONS.forEach((section) => {
+      const key = section.key;
+      const remoteBody = remoteBodies[key] || '';
+      const baseBody = baseBodies[key] || '';
+      const incomingBody = incomingBodies[key] || '';
+      merged[key] = plain(incomingBody) === plain(baseBody) ? remoteBody : incomingBody;
+    });
+    const html = dayPaperHtmlFromBodies(merged);
+    const text = dayPlainFromHtml(html);
+    if (!DAY_SECTION_KEYS.some((key) => daySectionHasContent(merged[key]))) {
+      return Object.assign({}, incoming, { memo: '', memoHtml: '' });
+    }
+    return Object.assign({}, incoming, {
+      memo: text,
+      memoHtml: html || memoTextToHtml(text)
+    });
+  }
   function dayPaperHasVisibleContent(html) {
     const bodies = daySectionBodiesFromHtml(html);
     return DAY_SECTION_KEYS.some((key) => daySectionHasContent(bodies[key]));
@@ -5423,6 +5455,7 @@
   window.addEventListener('pagehide', () => { flushMemo(); flushMonth(); flushAllRichDocs(); });
   bindFmtBubble();
   bindFlowEditor();
+  store.mergeTask = mergeDayPaperTask;
   render();
   store.init();
   queueRolloverAfterFreshSync(true);

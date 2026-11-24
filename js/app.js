@@ -5454,6 +5454,8 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') refreshMonthIfDayChanged();
   });
+  window.addEventListener('focus', refreshMonthIfDayChanged);
+  window.addEventListener('pageshow', refreshMonthIfDayChanged);
   setInterval(refreshMonthIfDayChanged, 60000);
   let midnightTimer = null;
   function scheduleMidnightRollover() {
@@ -5483,6 +5485,27 @@
   document.addEventListener('pointerdown', reloadIfDayChangedOnInteraction, true);
   document.addEventListener('focusin', reloadIfDayChangedOnInteraction, true);
   document.addEventListener('keydown', reloadIfDayChangedOnInteraction, true);
+  let versionCheckPromise = null;
+  function checkForNewVersion() {
+    if (versionCheckPromise) return;
+    versionCheckPromise = fetch('./js/config.js?check=' + Date.now(), { cache: 'no-store' })
+      .then((res) => res.ok ? res.text() : '')
+      .then((text) => {
+        const m = text.match(/version:\s*'(\d+)'/);
+        if (!m || Number(m[1]) <= Number(Cfg.version)) return;
+        flushMemo();
+        flushMonth();
+        flushAllRichDocs();
+        location.reload();
+      })
+      .catch(() => {})
+      .finally(() => { versionCheckPromise = null; });
+  }
+  window.addEventListener('focus', checkForNewVersion);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkForNewVersion();
+  });
+  setInterval(checkForNewVersion, 60000);
   window.addEventListener('pagehide', () => { flushMemo(); flushMonth(); flushAllRichDocs(); });
   bindFmtBubble();
   bindFlowEditor();

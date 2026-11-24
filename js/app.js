@@ -5470,6 +5470,19 @@
     }, Math.max(1000, next.getTime() - now.getTime()));
   }
   scheduleMidnightRollover();
+  let dateReloading = false;
+  function reloadIfDayChangedOnInteraction() {
+    if (dateReloading || today() === monthDayStamp) return;
+    dateReloading = true;
+    /* 页面被系统挂起时 60 秒定时器可能没跑，先落盘旧日，再重载到新日。 */
+    flushMemo();
+    flushMonth();
+    flushAllRichDocs();
+    location.reload();
+  }
+  document.addEventListener('pointerdown', reloadIfDayChangedOnInteraction, true);
+  document.addEventListener('focusin', reloadIfDayChangedOnInteraction, true);
+  document.addEventListener('keydown', reloadIfDayChangedOnInteraction, true);
   window.addEventListener('pagehide', () => { flushMemo(); flushMonth(); flushAllRichDocs(); });
   bindFmtBubble();
   bindFlowEditor();

@@ -1114,6 +1114,12 @@
     });
     return keep.join('');
   }
+  function stripRolloverLabelsHtml(bodyHtml) {
+    return String(bodyHtml || '').replace(
+      /<div><b[^>]*data-rollover="1"[^>]*>.*?<\/b><\/div>/gi,
+      ''
+    );
+  }
   function dayPaperNormalizeHtml(html) {
     const bodies = daySectionBodiesFromHtml(html);
     DAY_SECTION_KEYS.forEach((key) => {
@@ -1409,14 +1415,27 @@
   function rollDayPapers() {
     if (dayRolloverRunning) return;
     repairDuplicateRolloverPapers();
-    const d = today();
-    const yesterday = Core.shiftDate(d, -1);
+    const end = today();
+    const dates = Array.from(new Set(dayPapers()
+      .map((p) => p.date)
+      .filter((date) => date && date < end)))
+      .sort();
+    if (!dates.length) return;
+    /* 不只处理“昨天”：从最早未清的日纸开始逐日滚到今天，
+     * 这样中间有一天没打开/同步失败，也不会把前一天内容留在原地。 */
+    let date = dates[0];
+    while (date < end) {
+      rollDayPaperStep(date, Core.shiftDate(date, 1));
+      date = Core.shiftDate(date, 1);
+    }
+  }
+  function rollDayPaperStep(yesterday, d) {
     const yesterdayCopies = dayPapers().filter((p) => p.date === yesterday);
     if (!yesterdayCopies.length) return;
-    const visible = yesterdayCopies.slice().sort((a, b) =>
+    const visible = yesterdayCopies.filter(dayPaperHasText).sort((a, b) =>
       String(b.updatedAt || '') < String(a.updatedAt || '') ? -1 : 1
     )[0];
-    if (!visible || !dayPaperHasText(visible)) return;
+    if (!visible) return;
     const sourceHtml = dayPaperNormalizeHtml(dayPaperRawHtmlForItem(visible));
     const sourceBodies = daySectionBodiesFromHtml(sourceHtml);
     const target = dayPaperFor(d);
@@ -1435,7 +1454,7 @@
       yesterdayCopies.filter(dayPaperHasText).forEach((p) => {
         const sourceBodies = daySectionBodiesFromHtml(dayPaperNormalizeHtml(dayPaperRawHtmlForItem(p)));
         DAY_SECTIONS.forEach((section) => {
-          const sourceBody = sourceBodies[section.key] || '';
+          const sourceBody = stripRolloverLabelsHtml(sourceBodies[section.key] || '');
           if (!daySectionHasContent(sourceBody)) return;
           const sourceText = normalizeMemoPlain(dayPlainFromHtml(sourceBody)).trim();
           const targetText = normalizeMemoPlain(dayPlainFromHtml(targetBodies[section.key] || '')).trim();
@@ -1473,7 +1492,7 @@
     const targetBodies = daySectionBodiesFromHtml(targetHtml);
     const mergedBodies = {};
     DAY_SECTIONS.forEach((section) => {
-      const sourceBody = sourceBodies[section.key] || '';
+      const sourceBody = stripRolloverLabelsHtml(sourceBodies[section.key] || '');
       if (!daySectionHasContent(sourceBody)) {
         mergedBodies[section.key] = targetBodies[section.key] || '';
         return;
@@ -5398,6 +5417,25 @@
     await store.flush();
     await store.refresh(false).catch(() => {});
     toast('已同步');
+  });
+  $('#btn-rollover').addEventListener('click', async () => {
+    if (!store.token) { toast('请先连接同步'); return; }
+    const btn = $('#btn-rollover');
+    btn.disabled = true;
+    try {
+      await store.flush();
+      await store.refresh(false);
+      flushMemo();
+      flushMonth();
+      flushAllRichDocs();
+      queueDayRollover();
+      queueMonthRollover();
+      toast('已拉取最新云端，正在补迁移');
+    } catch (err) {
+      toast('补迁移失败：' + (err && err.message || '同步失败'));
+    } finally {
+      btn.disabled = false;
+    }
   });
   $('#task-form').addEventListener('change', (e) => {
     if (e.target && e.target.id === 'f-kind') applyKindFields(e.target.value);

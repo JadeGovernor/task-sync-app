@@ -376,7 +376,9 @@ ok('5f2 同日期的旧副本也清空，已删除内容不会复活',
   staleDay && !String(staleDay.memo || '').trim() && staleDay.rolledTo === dates.t &&
   !/已删除的旧副本/.test(todayPaper.text), staleDay);
 const oldThreeDay = await remoteOne('day-old3');
-ok('5f3 三天前的日程不会跟着迁移', oldThreeDay && oldThreeDay.memo === '三天前未完成', oldThreeDay);
+ok('5f3 三天前的日程会连续滚到今天',
+  oldThreeDay && !String(oldThreeDay.memo || '').trim() &&
+  /三天前未完成/.test(todayPaper.text), { old: oldThreeDay, today: todayPaper.text });
 await ev(`(() => {
   const all = window.__mock.files()['tasks.json'];
   const src = all.find((x) => x.id === 'day-y');

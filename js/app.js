@@ -5425,12 +5425,26 @@
     try {
       await store.flush();
       await store.refresh(false);
+      const pendingBefore = dayPapers()
+        .filter((p) => p.date < today() && dayPaperHasText(p))
+        .map((p) => p.date);
       flushMemo();
       flushMonth();
       flushAllRichDocs();
       queueDayRollover();
       queueMonthRollover();
-      toast('已拉取最新云端，正在补迁移');
+      setTimeout(() => {
+        const pendingAfter = dayPapers()
+          .filter((p) => p.date < today() && dayPaperHasText(p))
+          .map((p) => p.date);
+        if (!pendingBefore.length && !pendingAfter.length) {
+          toast('已是最新，没有待补迁移');
+        } else if (!pendingAfter.length) {
+          toast('补迁移完成');
+        } else {
+          toast('还有 ' + new Set(pendingAfter).size + ' 天内容待迁移，请检查同步');
+        }
+      }, 650);
     } catch (err) {
       toast('补迁移失败：' + (err && err.message || '同步失败'));
     } finally {
